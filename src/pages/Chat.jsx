@@ -1,0 +1,208 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { Send, Bot, User, Loader2, RefreshCw, Trash2 } from 'lucide-react';
+
+const Chat = () => {
+    const [messages, setMessages] = useState([]);
+    const [input, setInput] = useState('');
+    const [sending, setSending] = useState(false);
+    const [loading, setLoading] = useState(true);
+    const [agentId, setAgentId] = useState('main'); // Default to main agent
+    const messagesEndRef = useRef(null);
+
+    useEffect(() => {
+        fetchHistory();
+    }, [agentId]);
+
+    useEffect(() => {
+        scrollToBottom();
+    }, [messages]);
+
+    const scrollToBottom = () => {
+        messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    };
+
+    const fetchHistory = async () => {
+        setLoading(true);
+        try {
+            // Fetch history for the current agent session
+            // We use a convention for session keys: agent:{agentId}
+            const sessionKey = `agent:${agentId}`;
+            const response = await fetch(`/api/chat?action=history&sessionKey=${sessionKey}&limit=50`);
+
+            if (response.ok) {
+                const data = await response.json();
+                setMessages(data.messages || []);
+            }
+        } catch (error) {
+            console.error('Failed to fetch chat history:', error);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleSend = async (e) => {
+        e.preventDefault();
+        if (!input.trim() || sending) return;
+
+        const userMessage = {
+            role: 'user',
+            content: input,
+            timestamp: new Date().toISOString()
+        };
+
+        // Optimistically add user message
+        setMessages(prev => [...prev, userMessage]);
+        setInput('');
+        setSending(true);
+
+        try {
+            const response = await fetch('/api/chat', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    message: userMessage.content,
+                    agentId,
+                    sessionId: `agent:${agentId}` // Optional: for persistent storage if backend supports it
+                })
+            });
+
+            const data = await response.json();
+
+            if (data.choices?.[0]?.message) {
+                const botMessage = {
+                    role: 'assistant',
+                    content: data.choices[0].message.content,
+                    timestamp: new Date().toISOString()
+                };
+                setMessages(prev => [...prev, botMessage]);
+            }
+        } catch (error) {
+            console.error('Failed to send message:', error);
+            // Verify if we should show error to user
+        } finally {
+            setSending(false);
+        }
+    };
+
+    const handleClear = async () => {
+        if (!confirm('Clear chat history?')) return;
+        // In a real app, call API to clear history. For now just clear local.
+        setMessages([]);
+    };
+
+    return (
+        <div className="flex flex-col h-[calc(100vh-8rem)] bg-white rounded-lg shadow overflow-hidden">
+            {/* Chat Header */}
+            <div className="p-4 border-b border-gray-100 flex justify-between items-center bg-gray-50">
+                <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center text-blue-600">
+                        <Bot className="w-6 h-6" />
+                    </div>
+                    <div>
+                        <h2 className="font-bold text-gray-800">Agent Chat</h2>
+                        <div className="flex items-center gap-2 text-xs text-gray-500">
+                            <span className="w-2 h-2 rounded-full bg-green-500"></span>
+                            Online
+                        </div>
+                    </div>
+                </div>
+
+                <div className="flex gap-2">
+                    <button
+                        onClick={fetchHistory}
+                        className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-colors"
+                        title="Refresh History"
+                    >
+                        <RefreshCw className="w-5 h-5" />
+                    </button>
+                    <button
+                        onClick={handleClear}
+                        className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-full transition-colors"
+                        title="Clear Chat"
+                    >
+                        <Trash2 className="w-5 h-5" />
+                    </button>
+                </div>
+            </div>
+
+            {/* Messages Area */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-50/50">
+                {loading ? (
+                    <div className="flex items-center justify-center h-full text-gray-400">
+                        <Loader2 className="w-8 h-8 animate-spin" />
+                    </div>
+                ) : messages.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center h-full text-gray-400">
+                        <Bot className="w-16 h-16 mb-4 opacity-20" />
+                        <p>No messages yet. Start the conversation!</p>
+                    </div>
+                ) : (
+                    messages.map((msg, index) => (
+                        <div
+                            key={index}
+                            className={`flex gap-3 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                        >
+                            {msg.role === 'assistant' && (
+                                <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 flex-shrink-0 mt-1">
+                                    <Bot className="w-5 h-5" />
+                                </div>
+                            )}
+
+                            <div
+                                className={`max-w-[70%] p-3 rounded-lg shadow-sm text-sm whitespace-pre-wrap ${msg.role === 'user'
+                                        ? 'bg-blue-600 text-white rounded-tr-none'
+                                        : 'bg-white text-gray-800 border border-gray-100 rounded-tl-none'
+                                    }`}
+                            >
+                                {msg.content}
+                            </div>
+
+                            {msg.role === 'user' && (
+                                <div className="w-8 h-8 rounded-full bg-gray-200 flex items-center justify-center text-gray-600 flex-shrink-0 mt-1">
+                                    <User className="w-5 h-5" />
+                                </div>
+                            )}
+                        </div>
+                    ))
+                )}
+                {sending && (
+                    <div className="flex justify-start gap-3">
+                        <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 flex-shrink-0 mt-1">
+                            <Bot className="w-5 h-5" />
+                        </div>
+                        <div className="bg-white p-3 rounded-lg rounded-tl-none border border-gray-100 shadow-sm flex items-center gap-1">
+                            <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></span>
+                            <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce delay-75"></span>
+                            <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce delay-150"></span>
+                        </div>
+                    </div>
+                )}
+                <div ref={messagesEndRef} />
+            </div>
+
+            {/* Input Area */}
+            <form onSubmit={handleSend} className="p-4 bg-white border-t border-gray-100">
+                <div className="flex gap-2">
+                    <input
+                        type="text"
+                        value={input}
+                        onChange={(e) => setInput(e.target.value)}
+                        placeholder="Type your message..."
+                        className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
+                        disabled={sending}
+                    />
+                    <button
+                        type="submit"
+                        disabled={!input.trim() || sending}
+                        className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
+                    >
+                        <Send className="w-4 h-4" />
+                        <span className="hidden sm:inline">Send</span>
+                    </button>
+                </div>
+            </form>
+        </div>
+    );
+};
+
+export default Chat;
