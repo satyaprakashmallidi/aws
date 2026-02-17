@@ -8,19 +8,37 @@ const AgentSettingsModal = ({ agent, isOpen, onClose, onUpdate }) => {
         identityName: '',
         identityEmoji: ''
     });
+    const [availableModels, setAvailableModels] = useState([]);
+    const [loadingModels, setLoadingModels] = useState(false);
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState(null);
 
     useEffect(() => {
-        if (agent) {
-            setFormData({
-                description: agent.description || '',
-                model: agent.model || '',
-                identityName: agent.identity?.name || '',
-                identityEmoji: agent.identity?.emoji || ''
-            });
+        if (isOpen && agent) {
+            // Fetch models
+            setLoadingModels(true);
+            fetch('/api/agents?action=models')
+                .then(res => res.json())
+                .then(data => {
+                    setAvailableModels(Array.isArray(data) ? data : []);
+                })
+                .catch(err => console.error('Failed to load models', err))
+                .finally(() => setLoadingModels(false));
+
+            // Fetch full agent config
+            fetch(`/api/agents?id=${agent.id}`)
+                .then(res => res.json())
+                .then(fullConfig => {
+                    setFormData({
+                        description: fullConfig.description || '',
+                        model: fullConfig.model || '',
+                        identityName: fullConfig.identity?.name || '',
+                        identityEmoji: fullConfig.identity?.emoji || ''
+                    });
+                })
+                .catch(err => console.error('Failed to load full config', err));
         }
-    }, [agent]);
+    }, [isOpen, agent]);
 
     if (!isOpen || !agent) return null;
 
@@ -110,15 +128,34 @@ const AgentSettingsModal = ({ agent, isOpen, onClose, onUpdate }) => {
 
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">
-                            Model ID
+                            Model Selection
                         </label>
-                        <input
-                            type="text"
-                            value={formData.model}
-                            onChange={(e) => setFormData({ ...formData, model: e.target.value })}
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all font-mono text-sm"
-                            placeholder="e.g. google-antigravity/claude-opus"
-                        />
+                        {loadingModels ? (
+                            <div className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-gray-50 text-gray-400 text-sm">
+                                Loading models...
+                            </div>
+                        ) : (
+                            <div className="relative">
+                                <select
+                                    value={formData.model}
+                                    onChange={(e) => setFormData({ ...formData, model: e.target.value })}
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all appearance-none bg-white"
+                                >
+                                    <option value="">Select a model...</option>
+                                    {availableModels.map((model) => (
+                                        <option key={model.key} value={model.key}>
+                                            {model.name} ({model.key})
+                                        </option>
+                                    ))}
+                                </select>
+                                <div className="absolute inset-y-0 right-0 flex items-center px-2 pointer-events-none">
+                                    <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
+                                </div>
+                            </div>
+                        )}
+                        <p className="mt-1 text-xs text-gray-500">
+                            Select the primary AI model for this agent.
+                        </p>
                     </div>
 
                     <div>

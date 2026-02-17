@@ -1,5 +1,5 @@
 import { getAgentConfig, updateAgentConfig, getAgentStatus } from './lib/openclaw-agent.js';
-import { listAgents } from './lib/openclaw.js';
+import { listAgents, listModels } from './lib/openclaw.js';
 
 export default async function handler(req, res) {
     const { id, action } = req.query;
@@ -17,6 +17,17 @@ export default async function handler(req, res) {
                 return res.status(200).json(status);
             } catch (error) {
                 console.error('Failed to get agent status:', error);
+                return res.status(500).json({ error: error.message });
+            }
+        }
+
+        // Get available models
+        if (action === 'models') {
+            try {
+                const models = await listModels();
+                return res.status(200).json(models);
+            } catch (error) {
+                console.error('Failed to list models:', error);
                 return res.status(500).json({ error: error.message });
             }
         }

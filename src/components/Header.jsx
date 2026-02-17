@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { health, agents as agentsAPI } from '../lib/api';
+import { UserButton } from "@clerk/clerk-react";
+import { health } from '../lib/api';
 
 const Header = () => {
     const location = useLocation();
@@ -62,41 +63,38 @@ const Header = () => {
                     {/* Center: Navigation */}
                     <nav className="flex gap-4">
                         <Link
-                            to="/"
-                            className={`px-4 py-2 rounded-lg font-medium transition-colors ${isActive('/')
-                                    ? 'bg-blue-600 text-white'
-                                    : 'text-gray-300 hover:bg-gray-800'
+                            to="/app"
+                            className={`px-4 py-2 rounded-lg font-medium transition-colors ${isActive('/app')
+                                ? 'bg-blue-600 text-white'
+                                : 'text-gray-300 hover:bg-gray-800'
                                 }`}
                         >
                             Home
                         </Link>
                         <Link
-                            to="/chat"
-                            className={`px-4 py-2 rounded-lg font-medium transition-colors ${isActive('/chat')
-                                    ? 'bg-blue-600 text-white'
-                                    : 'text-gray-300 hover:bg-gray-800'
+                            to="/app/chat"
+                            className={`px-4 py-2 rounded-lg font-medium transition-colors ${isActive('/app/chat')
+                                ? 'bg-blue-600 text-white'
+                                : 'text-gray-300 hover:bg-gray-800'
                                 }`}
                         >
                             Chat
                         </Link>
                         <Link
-                            to="/broadcast"
-                            className={`px-4 py-2 rounded-lg font-medium transition-colors ${isActive('/broadcast')
-                                    ? 'bg-blue-600 text-white'
-                                    : 'text-gray-300 hover:bg-gray-800'
+                            to="/app/broadcast"
+                            className={`px-4 py-2 rounded-lg font-medium transition-colors ${isActive('/app/broadcast')
+                                ? 'bg-blue-600 text-white'
+                                : 'text-gray-300 hover:bg-gray-800'
                                 }`}
                         >
                             Broadcast
                         </Link>
                     </nav>
 
-                    {/* Right: Sign Out */}
-                    <button
-                        onClick={handleSignOut}
-                        className="px-4 py-2 bg-red-600 hover:bg-red-700 rounded-lg font-medium transition-colors"
-                    >
-                        Sign Out
-                    </button>
+                    {/* Right: User Profile */}
+                    <div className="flex items-center gap-4">
+                        <UserButton afterSignOutUrl="/" />
+                    </div>
                 </div>
             </div>
         </header>

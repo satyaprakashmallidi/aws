@@ -96,6 +96,45 @@ export async function listAgents() {
 }
 
 /**
+ * List available models
+ */
+export async function listModels() {
+    try {
+        const response = await invokeTool({
+            tool: 'exec',
+            args: {
+                command: 'openclaw models list --json'
+            }
+        });
+
+        // Parse the JSON output from stdout
+        // The output might be a string in response.stdout or response directly
+        const rawOutput = response.stdout || response.result || response.content || "";
+        const models = JSON.parse(rawOutput);
+
+        if (Array.isArray(models)) {
+            return models.map(m => ({
+                key: m.id || m.key || m.name,
+                name: m.name || m.id
+            }));
+        }
+
+        return [];
+    } catch (error) {
+        console.warn('Failed to list models via exec:', error.message);
+        // Fallback since 'models_list' tool is missing
+        return [
+            { key: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash' },
+            { key: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro' },
+            { key: 'claude-3-5-sonnet', name: 'Claude 3.5 Sonnet' },
+            { key: 'gpt-4o', name: 'GPT-4o' },
+            { key: 'gpt-4o-mini', name: 'GPT-4o Mini' },
+            { key: 'deepseek-r1', name: 'DeepSeek R1' }
+        ];
+    }
+}
+
+/**
  * Get health status
  */
 export async function getHealth() {

@@ -27,30 +27,34 @@ export default async function handler(req, res) {
         try {
             const response = await sendChatMessage({
                 userId: user.id,
-                messages: [{ role: 'user', content: message }],
                 agentId
             });
 
             // Save to Supabase
-            const supabase = await supabaseAdmin.get();
-            if (sessionId) {
-                await supabase
-                    .from('messages')
-                    .insert({
-                        session_id: sessionId,
-                        role: 'user',
-                        content: message
-                    });
-
-                if (response.choices?.[0]?.message?.content) {
+            try {
+                const supabase = await supabaseAdmin.get();
+                if (sessionId) {
                     await supabase
                         .from('messages')
                         .insert({
                             session_id: sessionId,
-                            role: 'assistant',
-                            content: response.choices[0].message.content
+                            role: 'user',
+                            content: message
                         });
+
+                    if (response.choices?.[0]?.message?.content) {
+                        await supabase
+                            .from('messages')
+                            .insert({
+                                session_id: sessionId,
+                                role: 'assistant',
+                                content: response.choices[0].message.content
+                            });
+                    }
                 }
+            } catch (dbError) {
+                console.error('Failed to save to Supabase:', dbError);
+                // Don't fail the request if just storage fails
             }
 
             return res.status(200).json(response);

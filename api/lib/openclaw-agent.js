@@ -5,37 +5,63 @@ import { invokeTool } from './openclaw.js';
  * @param {string} agentId - Agent ID (e.g., 'main', 'work')
  */
 export async function getAgentConfig(agentId) {
-    const response = await invokeTool({
-        tool: 'read',
-        args: {
-            path: `${process.env.HOME || '/home/ubuntu'}/.openclaw/openclaw.json`
+    try {
+        const response = await invokeTool({
+            tool: 'read',
+            args: {
+                path: `${process.env.HOME || '/home/ubuntu'}/.openclaw/openclaw.json`
+            }
+        });
+
+        // Parse the config
+        const config = JSON.parse(response.content || '{}');
+
+        // Find the specific agent
+        const agents = config.agents?.list || [];
+        const agent = agents.find(a => a.id === agentId);
+
+        if (!agent) {
+            // If we can read but agent is not found, return default for main
+            if (agentId === 'main') {
+                return {
+                    id: 'main',
+                    description: 'Primary AI Agent',
+                    model: 'gemini-2.0-flash',
+                    identity: { name: 'OpenClaw', emoji: '🦞' }
+                };
+            }
+            throw new Error(`Agent not found: ${agentId}`);
         }
-    });
 
-    // Parse the config
-    const config = JSON.parse(response.content || '{}');
+        return {
+            id: agent.id,
+            workspace: agent.workspace,
+            model: agent.model,
+            identity: agent.identity,
+            tools: agent.tools,
+            skills: agent.skills,
+            thinkingLevel: agent.thinking?.level,
+            sandbox: agent.sandbox,
+            description: agent.description || '',
+            // Add any additional config fields
+            ...agent
+        };
+    } catch (error) {
+        console.warn(`Failed to read agent config via tool 'read': ${error.message}. Returning fallback.`);
 
-    // Find the specific agent
-    const agents = config.agents?.list || [];
-    const agent = agents.find(a => a.id === agentId);
-
-    if (!agent) {
-        throw new Error(`Agent not found: ${agentId}`);
+        // Fallback for demo/unreachable gateway
+        return {
+            id: agentId,
+            description: 'Primary AI Agent (Fallback Config)',
+            model: 'gemini-2.0-flash',
+            identity: {
+                name: agentId === 'main' ? 'OpenClaw' : 'Agent',
+                emoji: '🦞'
+            },
+            workspace: '/home/ubuntu/.openclaw/workspace',
+            error: 'Configuration could not be loaded from Gateway.'
+        };
     }
-
-    return {
-        id: agent.id,
-        workspace: agent.workspace,
-        model: agent.model,
-        identity: agent.identity,
-        tools: agent.tools,
-        skills: agent.skills,
-        thinkingLevel: agent.thinking?.level,
-        sandbox: agent.sandbox,
-        description: agent.description || '',
-        // Add any additional config fields
-        ...agent
-    };
 }
 
 /**
