@@ -31,7 +31,12 @@ export default async function handler(req, res) {
                 return res.status(200).json(models);
             } catch (error) {
                 console.error('Failed to list models:', error);
-                return res.status(500).json({ error: error.message });
+                // Return full error details including stack for debugging purposes
+                return res.status(500).json({
+                    error: error.message,
+                    details: error.stack,
+                    type: error.name
+                });
             }
         }
 

@@ -60,7 +60,12 @@ export default async function handler(req, res) {
             return res.status(200).json(response);
         } catch (error) {
             console.error('Chat error:', error);
-            return res.status(500).json({ error: error.message });
+            // Return full error details including stack for debugging purposes
+            return res.status(500).json({
+                error: error.message,
+                details: error.stack,
+                type: error.name
+            });
         }
     }
 
