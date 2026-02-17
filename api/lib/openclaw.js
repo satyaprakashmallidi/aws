@@ -109,48 +109,52 @@ export async function listAgents() {
  */
 export async function listModels() {
     try {
-        const response = await invokeTool({
-            tool: 'exec',
-            args: {
-                command: 'openclaw models list --json'
-            }
+        // Use the standard OpenAI-compatible /v1/models endpoint
+        // This avoids permissions issues with the 'exec' tool for remote connections
+        if (!GATEWAY_URL || !GATEWAY_TOKEN) {
+            throw new Error('OPENCLAW_GATEWAY_URL or OPENCLAW_GATEWAY_TOKEN is not configured in environment variables');
+        }
+
+        const response = await fetch(`${GATEWAY_URL.replace(/\/$/, '')}/v1/models`, {
+            method: 'GET',
+            headers: {
+                'Authorization': `Bearer ${GATEWAY_TOKEN}`,
+                'Accept': 'application/json'
+            },
+            cache: 'no-store'
         });
 
-        // exec tool returns { stdout, stderr, code }
-        const rawOutput = response.stdout || response.result || response.content || "";
-
-        // Find the start of the JSON object (skip warnings/text)
-        const jsonStartIndex = rawOutput.indexOf('{');
-        if (jsonStartIndex === -1) {
-            throw new Error("No JSON object found in output");
+        if (!response.ok) {
+            const error = await response.text();
+            throw new Error(`OpenClaw Models API error (${response.status}): ${error}`);
         }
 
-        const jsonString = rawOutput.substring(jsonStartIndex);
+        const data = await response.json();
 
-        let modelsData = null;
-        try {
-            modelsData = JSON.parse(jsonString);
-        } catch (e) {
-            console.error('JSON Parse error for models:', e);
-            // Log snippet for debugging
-            console.error('Failed JSON string start:', jsonString.substring(0, 100));
-            throw e;
-        }
-
-        // CLI returns { count, models: [...] }
-        const models = modelsData?.models || modelsData;
+        // OpenClaw /v1/models returns { object: "list", data: [...] }
+        const models = data.data || data.models || [];
 
         if (Array.isArray(models)) {
             return models.map(m => ({
-                key: m.key || m.id || m.name,
-                name: m.name || m.id
+                key: m.id || m.key,
+                name: m.name || m.id,
+                // Add extra fields as needed by UI
+                available: m.available !== false
             }));
         }
 
-        throw new Error(`Unexpected models format: ${typeof modelsData}`);
+        return [];
     } catch (error) {
-        console.error('Failed to list models via exec:', error.message);
-        throw error; // Let the API route return a 500 so you can see the error in Vercel logs
+        console.error('Failed to list models via API:', error.message);
+        // Fallback since API call failed
+        return [
+            { key: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash (Fallback)' },
+            { key: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro (Fallback)' },
+            { key: 'claude-3-5-sonnet', name: 'Claude 3.5 Sonnet (Fallback)' },
+            { key: 'gpt-4o', name: 'GPT-4o (Fallback)' },
+            { key: 'gpt-4o-mini', name: 'GPT-4o Mini (Fallback)' },
+            { key: 'deepseek-r1', name: 'DeepSeek R1 (Fallback)' }
+        ];
     }
 }
 
