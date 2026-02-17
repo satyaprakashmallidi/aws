@@ -15,9 +15,10 @@ const AgentSettingsModal = ({ agent, isOpen, onClose, onUpdate }) => {
 
     useEffect(() => {
         if (isOpen && agent) {
+            const timestamp = Date.now();
             // Fetch models
             setLoadingModels(true);
-            fetch('/api/agents?action=models')
+            fetch(`/api/agents?action=models&t=${timestamp}`)
                 .then(res => res.json())
                 .then(data => {
                     setAvailableModels(Array.isArray(data) ? data : []);
@@ -26,7 +27,7 @@ const AgentSettingsModal = ({ agent, isOpen, onClose, onUpdate }) => {
                 .finally(() => setLoadingModels(false));
 
             // Fetch full agent config
-            fetch(`/api/agents?id=${agent.id}`)
+            fetch(`/api/agents?id=${agent.id}&t=${timestamp}`)
                 .then(res => res.json())
                 .then(fullConfig => {
                     setFormData({

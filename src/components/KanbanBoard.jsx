@@ -19,7 +19,7 @@ const KanbanBoard = () => {
 
     const fetchTasks = async () => {
         try {
-            const response = await fetch('/api/cron?includeDisabled=true');
+            const response = await fetch(`/api/cron?includeDisabled=true&t=${Date.now()}`);
             if (response.ok) {
                 const data = await response.json();
                 setTasks(data.jobs || []);

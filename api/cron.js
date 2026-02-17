@@ -1,6 +1,9 @@
 import { listCronJobs, addCronJob, updateCronJob, deleteCronJob, runCronJob } from './lib/openclaw-cron.js';
 
 export default async function handler(req, res) {
+    // Disable Vercel serverless function caching
+    res.setHeader('Cache-Control', 'no-store, max-age=0, must-revalidate');
+
     const { id, action, includeDisabled } = req.query;
 
     // GET /api/cron - List jobs

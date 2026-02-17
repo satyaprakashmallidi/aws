@@ -21,7 +21,7 @@ const Header = () => {
             setGatewayStatus('online');
 
             // Get active agent count
-            const response = await fetch('/api/agents?action=status');
+            const response = await fetch(`/api/agents?action=status&t=${Date.now()}`);
             const data = await response.json();
             setActiveAgentCount(data.activeCount || 0);
         } catch (error) {

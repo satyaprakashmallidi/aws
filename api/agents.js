@@ -2,6 +2,9 @@ import { getAgentConfig, updateAgentConfig, getAgentStatus } from './lib/opencla
 import { listAgents, listModels } from './lib/openclaw.js';
 
 export default async function handler(req, res) {
+    // Disable Vercel serverless function caching
+    res.setHeader('Cache-Control', 'no-store, max-age=0, must-revalidate');
+
     const { id, action } = req.query;
 
     // GET /api/agents - List all agents

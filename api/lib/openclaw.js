@@ -14,6 +14,7 @@ export async function sendChatMessage({ userId, messages, agentId = 'main' }) {
         headers: {
             'Authorization': `Bearer ${GATEWAY_TOKEN}`,
             'Content-Type': 'application/json',
+            'Host': new URL(GATEWAY_URL).host,
             ...(agentId !== 'main' && { 'x-openclaw-agent-id': agentId })
         },
         body: JSON.stringify({
@@ -21,7 +22,8 @@ export async function sendChatMessage({ userId, messages, agentId = 'main' }) {
             user: `user:${userId}`, // Session isolation
             messages,
             stream: false // Set to true for streaming responses
-        })
+        }),
+        cache: 'no-store'
     });
 
     if (!response.ok) {
@@ -44,13 +46,15 @@ export async function invokeTool({ tool, args = {}, sessionKey }) {
         method: 'POST',
         headers: {
             'Authorization': `Bearer ${GATEWAY_TOKEN}`,
-            'Content-Type': 'application/json'
+            'Content-Type': 'application/json',
+            'Host': new URL(GATEWAY_URL).host
         },
         body: JSON.stringify({
             tool,
             args,
             ...(sessionKey && { sessionKey })
-        })
+        }),
+        cache: 'no-store'
     });
 
     if (!response.ok) {
@@ -81,17 +85,14 @@ export async function listAgents() {
             return response;
         }
 
-        // Default response
+        // Default response if no agents found but tool succeeded
         return {
-            agents: [{ id: 'main', status: 'active', model: 'default' }],
-            note: 'Using default agent configuration'
+            agents: [],
+            note: 'No agents found'
         };
     } catch (error) {
         console.error('Failed to list agents:', error);
-        return {
-            agents: [{ id: 'main', status: 'active', model: 'default' }],
-            note: 'Using default agent configuration (error fallback)'
-        };
+        throw error; // Let API return 500 so logs show the real error
     }
 }
 
@@ -108,29 +109,31 @@ export async function listModels() {
         });
 
         // Parse the JSON output from stdout
-        // The output might be a string in response.stdout or response directly
+        // exec tool returns { stdout, stderr, code }
         const rawOutput = response.stdout || response.result || response.content || "";
-        const models = JSON.parse(rawOutput);
+        console.log('Use-case specific log [listModels]:', { rawOutput }); // Debug log
+
+        let modelsData = null;
+        try {
+            modelsData = typeof rawOutput === 'string' ? JSON.parse(rawOutput) : rawOutput;
+        } catch (e) {
+            console.error('JSON Parse error for models:', e, rawOutput);
+        }
+
+        // CLI returns { count, models: [...] }
+        const models = modelsData?.models || modelsData;
 
         if (Array.isArray(models)) {
             return models.map(m => ({
-                key: m.id || m.key || m.name,
+                key: m.key || m.id || m.name,
                 name: m.name || m.id
             }));
         }
 
-        return [];
+        throw new Error(`Unexpected models format: ${typeof modelsData}`);
     } catch (error) {
-        console.warn('Failed to list models via exec:', error.message);
-        // Fallback since 'models_list' tool is missing
-        return [
-            { key: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash' },
-            { key: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro' },
-            { key: 'claude-3-5-sonnet', name: 'Claude 3.5 Sonnet' },
-            { key: 'gpt-4o', name: 'GPT-4o' },
-            { key: 'gpt-4o-mini', name: 'GPT-4o Mini' },
-            { key: 'deepseek-r1', name: 'DeepSeek R1' }
-        ];
+        console.error('Failed to list models via exec:', error.message);
+        throw error; // Let the API route return a 500 so you can see the error in Vercel logs
     }
 }
 
@@ -139,9 +142,24 @@ export async function listModels() {
  */
 export async function getHealth() {
     // Return basic connectivity status
-    // The Gateway root endpoint returns HTML, not JSON
+    // Use the /health endpoint for JSON response
+    try {
+        const response = await fetch(`${GATEWAY_URL}/health`);
+        if (response.ok) {
+            const data = await response.json();
+            return {
+                status: 'online',
+                gateway_url: GATEWAY_URL,
+                timestamp: new Date().toISOString(),
+                ...data
+            };
+        }
+    } catch (e) {
+        console.error('Health check failed:', e);
+    }
+
     return {
-        status: 'online',
+        status: 'online', // Assume online if config is present, consistent with previous behavior
         gateway_url: GATEWAY_URL,
         timestamp: new Date().toISOString(),
         message: 'Gateway connection configured',
