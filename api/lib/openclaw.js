@@ -1,6 +1,13 @@
 const GATEWAY_URL = process.env.OPENCLAW_GATEWAY_URL;
 const GATEWAY_TOKEN = process.env.OPENCLAW_GATEWAY_TOKEN;
 
+// Detailed logger
+function debugLog(context, data) {
+    if (process.env.DEBUG_OPENCLAW || true) { // Always log for now
+        console.log(`[OpenClaw:${context}]`, JSON.stringify(data, null, 2));
+    }
+}
+
 /**
  * Call OpenClaw Chat Completions API
  * @param {Object} options
@@ -9,33 +16,47 @@ const GATEWAY_TOKEN = process.env.OPENCLAW_GATEWAY_TOKEN;
  * @param {string} options.agentId - Agent ID (optional, defaults to 'main')
  */
 export async function sendChatMessage({ userId, messages, agentId = 'main' }) {
+    debugLog('sendChatMessage:start', { userId, agentId, messageCount: messages?.length });
+
     if (!GATEWAY_URL || !GATEWAY_TOKEN) {
+        console.error('[OpenClaw:Error] Missing Env Vars');
         throw new Error('OPENCLAW_GATEWAY_URL or OPENCLAW_GATEWAY_TOKEN is not configured in environment variables');
     }
 
-    const response = await fetch(`${GATEWAY_URL.replace(/\/$/, '')}/v1/chat/completions`, {
-        method: 'POST',
-        headers: {
-            'Authorization': `Bearer ${GATEWAY_TOKEN}`,
-            'Content-Type': 'application/json',
-            'Accept': 'application/json',
-            ...(agentId !== 'main' && { 'x-openclaw-agent-id': agentId })
-        },
-        body: JSON.stringify({
-            model: `openclaw:${agentId}`,
-            user: `user:${userId}`, // Session isolation
-            messages,
-            stream: false // Set to true for streaming responses
-        }),
-        cache: 'no-store'
-    });
+    try {
+        const url = `${GATEWAY_URL.replace(/\/$/, '')}/v1/chat/completions`;
+        debugLog('sendChatMessage:request', { url });
 
-    if (!response.ok) {
-        const error = await response.text();
-        throw new Error(`OpenClaw API error (${response.status}): ${error}`);
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${GATEWAY_TOKEN}`,
+                'Content-Type': 'application/json',
+                'Accept': 'application/json',
+                ...(agentId !== 'main' && { 'x-openclaw-agent-id': agentId })
+            },
+            body: JSON.stringify({
+                model: `openclaw:${agentId}`,
+                user: `user:${userId}`, // Session isolation
+                messages,
+                stream: false // Set to true for streaming responses
+            }),
+            cache: 'no-store'
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error(`[OpenClaw:Error] Chat API Failed: ${response.status}`, errorText);
+            throw new Error(`OpenClaw API error (${response.status}): ${errorText}`);
+        }
+
+        const data = await response.json();
+        debugLog('sendChatMessage:success', { id: data.id, model: data.model });
+        return data;
+    } catch (e) {
+        console.error('[OpenClaw:Error] sendChatMessage Exception:', e);
+        throw e;
     }
-
-    return response.json();
 }
 
 /**
@@ -46,31 +67,44 @@ export async function sendChatMessage({ userId, messages, agentId = 'main' }) {
  * @param {string} options.sessionKey - Optional session key
  */
 export async function invokeTool({ tool, args = {}, sessionKey }) {
+    debugLog('invokeTool:start', { tool, args: Object.keys(args), sessionKey });
+
     if (!GATEWAY_URL || !GATEWAY_TOKEN) {
         throw new Error('OPENCLAW_GATEWAY_URL or OPENCLAW_GATEWAY_TOKEN is not configured in environment variables');
     }
 
-    const response = await fetch(`${GATEWAY_URL.replace(/\/$/, '')}/tools/invoke`, {
-        method: 'POST',
-        headers: {
-            'Authorization': `Bearer ${GATEWAY_TOKEN}`,
-            'Content-Type': 'application/json',
-            'Accept': 'application/json'
-        },
-        body: JSON.stringify({
-            tool,
-            args,
-            ...(sessionKey && { sessionKey })
-        }),
-        cache: 'no-store'
-    });
+    try {
+        const url = `${GATEWAY_URL.replace(/\/$/, '')}/tools/invoke`;
+        // debugLog('invokeTool:request', { url }); 
 
-    if (!response.ok) {
-        const error = await response.text();
-        throw new Error(`OpenClaw Tools API error (${response.status}): ${error}`);
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${GATEWAY_TOKEN}`,
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+            },
+            body: JSON.stringify({
+                tool,
+                args,
+                ...(sessionKey && { sessionKey })
+            }),
+            cache: 'no-store'
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error(`[OpenClaw:Error] Tool Invoke Failed (${tool}): ${response.status}`, errorText);
+            throw new Error(`OpenClaw Tools API error (${response.status}): ${errorText}`);
+        }
+
+        const data = await response.json();
+        // debugLog('invokeTool:success', { tool, responseKeys: Object.keys(data) });
+        return data;
+    } catch (e) {
+        console.error(`[OpenClaw:Error] invokeTool Exception (${tool}):`, e);
+        throw e;
     }
-
-    return response.json();
 }
 
 /**
@@ -93,7 +127,6 @@ export async function listAgents() {
             return response;
         }
 
-        // Default response if no agents found but tool succeeded
         return {
             agents: [],
             note: 'No agents found'
@@ -108,42 +141,62 @@ export async function listAgents() {
  * List available models
  */
 export async function listModels() {
+    debugLog('listModels:start', {});
+
     try {
-        // Strategy: Read the openclaw.json config file directly using the 'read' tool.
-        // This is more reliable than 'exec' (permission issues) or /v1/models (needs extra config).
-        // The 'read' tool is explicitly allowed in our gateway config.
+        const configPath = '/home/ubuntu/.openclaw/openclaw.json';
+        debugLog('listModels:reading_config', { path: configPath });
+
         const response = await invokeTool({
             tool: 'read',
             args: {
-                path: '~/.openclaw/openclaw.json'
+                path: configPath
             }
         });
 
-        // The read tool returns the file content as a string in response.content or response directly
-        // (handling different potential response shapes)
+        debugLog('listModels:read_response_type', {
+            responseType: typeof response,
+            keys: response ? Object.keys(response) : [],
+            hasContent: !!response?.content
+        });
+
+        // 1. Direct JSON Object
+        if (response && response.agents && response.models) {
+            debugLog('listModels:format_direct_json', {});
+            return parseModelsFromConfig(response);
+        }
+
+        // 2. Extracted Content (String)
         const fileContent = response.content || response.data || (typeof response === 'string' ? response : null);
 
         if (!fileContent) {
-            // Sometimes 'read' returns the object directly if it's JSON? 
-            // Let's check if response ITSELF is the config object
-            if (response.agents && response.models) {
-                return parseModelsFromConfig(response);
-            }
+            console.error('[OpenClaw:Error] listModels: Empty response from read tool', response);
             throw new Error('Empty response from read tool');
         }
 
         let config = null;
-        try {
-            config = JSON.parse(fileContent);
-        } catch (e) {
-            console.error('Failed to parse openclaw.json:', e);
-            throw new Error('Invalid JSON in openclaw.json');
+        if (typeof fileContent === 'object') {
+            debugLog('listModels:format_nested_object', {});
+            config = fileContent;
+        } else {
+            try {
+                // Check if content looks like JSON
+                const preview = fileContent.substring(0, 50);
+                debugLog('listModels:parsing_string', { preview });
+
+                config = JSON.parse(fileContent);
+            } catch (e) {
+                console.error('[OpenClaw:Error] listModels: JSON Parse error on content:', e);
+                throw new Error('Invalid JSON in openclaw.json');
+            }
         }
 
-        return parseModelsFromConfig(config);
+        const models = parseModelsFromConfig(config);
+        debugLog('listModels:success', { count: models.length, names: models.map(m => m.name) });
+        return models;
 
     } catch (error) {
-        console.error('Failed to list models via config read:', error.message);
+        console.error('[OpenClaw:Error] listModels: Failed completely:', error);
         // Fallback
         return [
             { key: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash (Fallback)' },
@@ -162,7 +215,7 @@ function parseModelsFromConfig(config) {
     // 1. Add Primary Model
     const primary = config.agents?.defaults?.model?.primary;
     if (primary) {
-        models.push({ key: primary, name: primary, tags: ['primary'] });
+        models.push({ key: primary, name: primary + ' (Primary)', tags: ['primary'] });
     }
 
     // 2. Add Fallback Models
@@ -188,8 +241,6 @@ function parseModelsFromConfig(config) {
  * Get health status
  */
 export async function getHealth() {
-    // Return basic connectivity status
-    // Use the /health endpoint for JSON response
     try {
         const response = await fetch(`${GATEWAY_URL}/health`);
         if (response.ok) {
@@ -206,7 +257,7 @@ export async function getHealth() {
     }
 
     return {
-        status: 'online', // Assume online if config is present, consistent with previous behavior
+        status: 'online',
         gateway_url: GATEWAY_URL,
         timestamp: new Date().toISOString(),
         message: 'Gateway connection configured',
