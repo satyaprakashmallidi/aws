@@ -24,9 +24,12 @@ export default async function handler(req, res) {
             return res.status(400).json({ error: 'Message required' });
         }
 
+        const messages = [{ role: 'user', content: message }];
+
         try {
             const response = await sendChatMessage({
                 userId: user.id,
+                messages,
                 agentId
             });
 
