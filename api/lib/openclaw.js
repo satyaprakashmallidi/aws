@@ -109,44 +109,42 @@ export async function listAgents() {
  */
 export async function listModels() {
     try {
-        // Use the standard OpenAI-compatible /v1/models endpoint
-        // This avoids permissions issues with the 'exec' tool for remote connections
-        if (!GATEWAY_URL || !GATEWAY_TOKEN) {
-            throw new Error('OPENCLAW_GATEWAY_URL or OPENCLAW_GATEWAY_TOKEN is not configured in environment variables');
-        }
-
-        const response = await fetch(`${GATEWAY_URL.replace(/\/$/, '')}/v1/models`, {
-            method: 'GET',
-            headers: {
-                'Authorization': `Bearer ${GATEWAY_TOKEN}`,
-                'Accept': 'application/json'
-            },
-            cache: 'no-store'
+        // Strategy: Read the openclaw.json config file directly using the 'read' tool.
+        // This is more reliable than 'exec' (permission issues) or /v1/models (needs extra config).
+        // The 'read' tool is explicitly allowed in our gateway config.
+        const response = await invokeTool({
+            tool: 'read',
+            args: {
+                path: '~/.openclaw/openclaw.json'
+            }
         });
 
-        if (!response.ok) {
-            const error = await response.text();
-            throw new Error(`OpenClaw Models API error (${response.status}): ${error}`);
+        // The read tool returns the file content as a string in response.content or response directly
+        // (handling different potential response shapes)
+        const fileContent = response.content || response.data || (typeof response === 'string' ? response : null);
+
+        if (!fileContent) {
+            // Sometimes 'read' returns the object directly if it's JSON? 
+            // Let's check if response ITSELF is the config object
+            if (response.agents && response.models) {
+                return parseModelsFromConfig(response);
+            }
+            throw new Error('Empty response from read tool');
         }
 
-        const data = await response.json();
-
-        // OpenClaw /v1/models returns { object: "list", data: [...] }
-        const models = data.data || data.models || [];
-
-        if (Array.isArray(models)) {
-            return models.map(m => ({
-                key: m.id || m.key,
-                name: m.name || m.id,
-                // Add extra fields as needed by UI
-                available: m.available !== false
-            }));
+        let config = null;
+        try {
+            config = JSON.parse(fileContent);
+        } catch (e) {
+            console.error('Failed to parse openclaw.json:', e);
+            throw new Error('Invalid JSON in openclaw.json');
         }
 
-        return [];
+        return parseModelsFromConfig(config);
+
     } catch (error) {
-        console.error('Failed to list models via API:', error.message);
-        // Fallback since API call failed
+        console.error('Failed to list models via config read:', error.message);
+        // Fallback
         return [
             { key: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash (Fallback)' },
             { key: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro (Fallback)' },
@@ -156,6 +154,34 @@ export async function listModels() {
             { key: 'deepseek-r1', name: 'DeepSeek R1 (Fallback)' }
         ];
     }
+}
+
+function parseModelsFromConfig(config) {
+    const models = [];
+
+    // 1. Add Primary Model
+    const primary = config.agents?.defaults?.model?.primary;
+    if (primary) {
+        models.push({ key: primary, name: primary, tags: ['primary'] });
+    }
+
+    // 2. Add Fallback Models
+    const fallbacks = config.agents?.defaults?.model?.fallbacks || [];
+    fallbacks.forEach(db => {
+        if (!models.find(m => m.key === db)) {
+            models.push({ key: db, name: db, tags: ['fallback'] });
+        }
+    });
+
+    // 3. Add Configured Models
+    const configured = config.agents?.defaults?.models || {};
+    Object.keys(configured).forEach(key => {
+        if (!models.find(m => m.key === key)) {
+            models.push({ key: key, name: key, tags: ['configured'] });
+        }
+    });
+
+    return models;
 }
 
 /**
