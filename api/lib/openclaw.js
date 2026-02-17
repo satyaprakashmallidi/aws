@@ -9,12 +9,16 @@ const GATEWAY_TOKEN = process.env.OPENCLAW_GATEWAY_TOKEN;
  * @param {string} options.agentId - Agent ID (optional, defaults to 'main')
  */
 export async function sendChatMessage({ userId, messages, agentId = 'main' }) {
-    const response = await fetch(`${GATEWAY_URL}/v1/chat/completions`, {
+    if (!GATEWAY_URL || !GATEWAY_TOKEN) {
+        throw new Error('OPENCLAW_GATEWAY_URL or OPENCLAW_GATEWAY_TOKEN is not configured in environment variables');
+    }
+
+    const response = await fetch(`${GATEWAY_URL.replace(/\/$/, '')}/v1/chat/completions`, {
         method: 'POST',
         headers: {
             'Authorization': `Bearer ${GATEWAY_TOKEN}`,
             'Content-Type': 'application/json',
-            'Host': new URL(GATEWAY_URL).host,
+            'Accept': 'application/json',
             ...(agentId !== 'main' && { 'x-openclaw-agent-id': agentId })
         },
         body: JSON.stringify({
@@ -28,7 +32,7 @@ export async function sendChatMessage({ userId, messages, agentId = 'main' }) {
 
     if (!response.ok) {
         const error = await response.text();
-        throw new Error(`OpenClaw API error: ${error}`);
+        throw new Error(`OpenClaw API error (${response.status}): ${error}`);
     }
 
     return response.json();
@@ -42,12 +46,16 @@ export async function sendChatMessage({ userId, messages, agentId = 'main' }) {
  * @param {string} options.sessionKey - Optional session key
  */
 export async function invokeTool({ tool, args = {}, sessionKey }) {
-    const response = await fetch(`${GATEWAY_URL}/tools/invoke`, {
+    if (!GATEWAY_URL || !GATEWAY_TOKEN) {
+        throw new Error('OPENCLAW_GATEWAY_URL or OPENCLAW_GATEWAY_TOKEN is not configured in environment variables');
+    }
+
+    const response = await fetch(`${GATEWAY_URL.replace(/\/$/, '')}/tools/invoke`, {
         method: 'POST',
         headers: {
             'Authorization': `Bearer ${GATEWAY_TOKEN}`,
             'Content-Type': 'application/json',
-            'Host': new URL(GATEWAY_URL).host
+            'Accept': 'application/json'
         },
         body: JSON.stringify({
             tool,
@@ -59,7 +67,7 @@ export async function invokeTool({ tool, args = {}, sessionKey }) {
 
     if (!response.ok) {
         const error = await response.text();
-        throw new Error(`OpenClaw Tools API error: ${error}`);
+        throw new Error(`OpenClaw Tools API error (${response.status}): ${error}`);
     }
 
     return response.json();
@@ -108,16 +116,25 @@ export async function listModels() {
             }
         });
 
-        // Parse the JSON output from stdout
         // exec tool returns { stdout, stderr, code }
         const rawOutput = response.stdout || response.result || response.content || "";
-        console.log('Use-case specific log [listModels]:', { rawOutput }); // Debug log
+
+        // Find the start of the JSON object (skip warnings/text)
+        const jsonStartIndex = rawOutput.indexOf('{');
+        if (jsonStartIndex === -1) {
+            throw new Error("No JSON object found in output");
+        }
+
+        const jsonString = rawOutput.substring(jsonStartIndex);
 
         let modelsData = null;
         try {
-            modelsData = typeof rawOutput === 'string' ? JSON.parse(rawOutput) : rawOutput;
+            modelsData = JSON.parse(jsonString);
         } catch (e) {
-            console.error('JSON Parse error for models:', e, rawOutput);
+            console.error('JSON Parse error for models:', e);
+            // Log snippet for debugging
+            console.error('Failed JSON string start:', jsonString.substring(0, 100));
+            throw e;
         }
 
         // CLI returns { count, models: [...] }
