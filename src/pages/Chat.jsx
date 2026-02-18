@@ -117,23 +117,86 @@ const Chat = () => {
                 body: JSON.stringify({
                     message: userMessage.content,
                     agentId,
-                    sessionId: sessionKey
+                    sessionId: sessionKey,
+                    stream: true
                 })
             });
 
-            const data = await response.json();
+            if (!response.ok) {
+                const errorText = await response.text();
+                throw new Error(errorText || `Request failed: ${response.status}`);
+            }
 
-            if (data.choices?.[0]?.message) {
-                const botMessage = {
-                    role: 'assistant',
-                    content: data.choices[0].message.content,
-                    timestamp: new Date().toISOString()
-                };
+            const reader = response.body?.getReader();
+            if (!reader) {
+                const data = await response.json();
+                const content = data.choices?.[0]?.message?.content;
+                if (content) {
+                    const botMessage = {
+                        role: 'assistant',
+                        content,
+                        timestamp: new Date().toISOString()
+                    };
+                    setMessages(prev => {
+                        const next = [...prev, botMessage];
+                        setLocalHistory(sessionKey, next);
+                        return next;
+                    });
+                }
+                return;
+            }
+
+            let assistantIndex = null;
+            const decoder = new TextDecoder('utf-8');
+            let buffer = '';
+
+            const ensureAssistantMessage = () => {
+                if (assistantIndex !== null) return;
                 setMessages(prev => {
-                    const next = [...prev, botMessage];
+                    const next = [...prev, { role: 'assistant', content: '', timestamp: new Date().toISOString() }];
+                    assistantIndex = next.length - 1;
                     setLocalHistory(sessionKey, next);
                     return next;
                 });
+            };
+
+            while (true) {
+                const { value, done } = await reader.read();
+                if (done) break;
+                buffer += decoder.decode(value, { stream: true });
+
+                const lines = buffer.split('\n');
+                buffer = lines.pop() || '';
+
+                for (const line of lines) {
+                    const trimmed = line.trim();
+                    if (!trimmed.startsWith('data:')) continue;
+                    const dataStr = trimmed.replace(/^data:\s*/, '');
+                    if (dataStr === '[DONE]') {
+                        break;
+                    }
+                    try {
+                        const payload = JSON.parse(dataStr);
+                        const delta = payload?.choices?.[0]?.delta?.content
+                            ?? payload?.choices?.[0]?.message?.content
+                            ?? '';
+                        if (!delta) continue;
+
+                        ensureAssistantMessage();
+                        setMessages(prev => {
+                            const next = [...prev];
+                            const current = next[assistantIndex];
+                            next[assistantIndex] = {
+                                ...current,
+                                content: (current?.content || '') + delta
+                            };
+                            setLocalHistory(sessionKey, next);
+                            return next;
+                        });
+                    } catch (e) {
+                        // Ignore non-JSON SSE lines
+                    }
+                }
             }
         } catch (error) {
             console.error('Failed to send message:', error);

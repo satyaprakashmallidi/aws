@@ -1,6 +1,7 @@
-import { sendChatMessage } from './lib/openclaw.js';
+import { sendChatMessage, sendChatMessageStream } from './lib/openclaw.js';
 import { getChatHistory, listSessions } from './lib/openclaw-chat.js';
 import { getUserFromRequest, supabaseAdmin } from './lib/supabase.js';
+import { Readable } from 'stream';
 
 export default async function handler(req, res) {
     const { action, sessionKey, limit, includeTools } = req.query;
@@ -18,7 +19,7 @@ export default async function handler(req, res) {
         // }
         const user = { id: 'dev-user' }; // TEMP: Mock user for development
 
-        const { message, agentId = 'main', sessionId } = req.body;
+        const { message, agentId = 'main', sessionId, stream } = req.body;
 
         if (!message) {
             return res.status(400).json({ error: 'Message required' });
@@ -27,11 +28,30 @@ export default async function handler(req, res) {
         const messages = [{ role: 'user', content: message }];
 
         try {
+            const sessionKey = sessionId || `agent:${agentId}`;
+
+            if (stream) {
+                const upstream = await sendChatMessageStream({
+                    userId: user.id,
+                    messages,
+                    agentId,
+                    sessionKey
+                });
+
+                res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+                res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+                res.setHeader('Connection', 'keep-alive');
+
+                const nodeStream = Readable.fromWeb(upstream.body);
+                nodeStream.pipe(res);
+                return;
+            }
+
             const response = await sendChatMessage({
                 userId: user.id,
                 messages,
                 agentId,
-                sessionKey: sessionId || `agent:${agentId}`
+                sessionKey
             });
 
             // Save to Supabase

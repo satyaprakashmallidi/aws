@@ -62,6 +62,48 @@ export async function sendChatMessage({ userId, messages, agentId = 'main', sess
 }
 
 /**
+ * Call OpenClaw Chat Completions API (streaming)
+ * Returns the raw fetch Response so the caller can pipe SSE.
+ */
+export async function sendChatMessageStream({ userId, messages, agentId = 'main', sessionKey }) {
+    debugLog('sendChatMessageStream:start', { userId, agentId, sessionKey, messageCount: messages?.length });
+
+    if (!GATEWAY_URL || !GATEWAY_TOKEN) {
+        console.error('[OpenClaw:Error] Missing Env Vars');
+        throw new Error('OPENCLAW_GATEWAY_URL or OPENCLAW_GATEWAY_TOKEN is not configured in environment variables');
+    }
+
+    const url = `${GATEWAY_URL.replace(/\/$/, '')}/v1/chat/completions`;
+    debugLog('sendChatMessageStream:request', { url });
+
+    const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+            'Authorization': `Bearer ${GATEWAY_TOKEN}`,
+            'Content-Type': 'application/json',
+            'Accept': 'text/event-stream',
+            ...(agentId !== 'main' && { 'x-openclaw-agent-id': agentId }),
+            ...(sessionKey && { 'x-openclaw-session-key': sessionKey })
+        },
+        body: JSON.stringify({
+            model: `openclaw:${agentId}`,
+            user: sessionKey || `user:${userId}`,
+            messages,
+            stream: true
+        }),
+        cache: 'no-store'
+    });
+
+    if (!response.ok) {
+        const errorText = await response.text();
+        console.error(`[OpenClaw:Error] Chat Stream Failed: ${response.status}`, errorText);
+        throw new Error(`OpenClaw API error (${response.status}): ${errorText}`);
+    }
+
+    return response;
+}
+
+/**
  * Call OpenClaw Tools Invoke API
  * @param {Object} options
  * @param {string} options.tool - Tool name (e.g., 'agents_list', 'sessions_list')
