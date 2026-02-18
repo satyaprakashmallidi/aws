@@ -144,41 +144,37 @@ export async function listModels() {
     debugLog('listModels:start', {});
 
     try {
-        const configPath = '/home/ubuntu/.openclaw/openclaw.json';
-        debugLog('listModels:reading_config', { path: configPath });
-
-        // Use exec tool to cat the config file (read tool is not available via HTTP)
+        // Use standard models_list tool
         const response = await invokeTool({
-            tool: 'exec',
-            args: {
-                command: `cat ${configPath}`
-            }
+            tool: 'models_list',
+            args: {}
         });
 
-        debugLog('listModels:exec_response', {
-            responseType: typeof response,
-            keys: response ? Object.keys(response) : []
+        debugLog('listModels:response', {
+            count: response?.count,
+            firstModel: response?.models?.[0]?.name
         });
 
-        // Extract stdout from exec response
-        const stdout = response?.result?.stdout || response?.stdout || response?.output || '';
-
-        if (!stdout) {
-            console.error('[OpenClaw:Error] listModels: Empty stdout from exec tool');
-            throw new Error('Empty response from exec cat');
+        if (response?.models) {
+            return response.models;
         }
 
-        let config = null;
-        try {
-            config = JSON.parse(stdout);
-        } catch (e) {
-            console.error('[OpenClaw:Error] listModels: JSON Parse error:', e.message);
-            throw new Error('Invalid JSON in openclaw.json');
+        // Fallback: If models_list not available, try reading config directly
+        console.warn('models_list tool didn\'t return expected format, trying to read config...');
+
+        const configPath = '~/.openclaw/openclaw.json';
+        const readResponse = await invokeTool({
+            tool: 'read',
+            args: { file_path: configPath }
+        });
+
+        const fileContent = readResponse?.content || readResponse?.data;
+        if (fileContent) {
+            const config = JSON.parse(fileContent);
+            return parseModelsFromConfig(config);
         }
 
-        const models = parseModelsFromConfig(config);
-        debugLog('listModels:success', { count: models.length, names: models.map(m => m.name) });
-        return models;
+        throw new Error('Could not list models via models_list or read config options');
 
     } catch (error) {
         console.error('[OpenClaw:Error] listModels: Failed completely:', error);

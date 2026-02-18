@@ -6,18 +6,18 @@ import { invokeTool } from './openclaw.js';
  */
 export async function getAgentConfig(agentId) {
     try {
-        const configPath = `${process.env.HOME || '/home/ubuntu'}/.openclaw/openclaw.json`;
-        // Use exec tool instead of read (read tool is not available via HTTP)
+        const configPath = '~/.openclaw/openclaw.json';
+        // Use read tool instead of exec
         const response = await invokeTool({
-            tool: 'exec',
+            tool: 'read',
             args: {
-                command: `cat ${configPath}`
+                file_path: configPath
             }
         });
 
-        // Extract stdout from exec response
-        const stdout = response?.result?.stdout || response?.stdout || response?.output || '';
-        const config = JSON.parse(stdout || '{}');
+        // Extract content from read response
+        const content = response?.content || response?.data || '';
+        const config = JSON.parse(content || '{}');
 
         // Extract agent info from actual config structure
         const primary = config.agents?.defaults?.model?.primary || '';
@@ -64,18 +64,18 @@ export async function getAgentConfig(agentId) {
  * @param {Object} updates - Config updates
  */
 export async function updateAgentConfig(agentId, updates) {
-    const configPath = `${process.env.HOME || '/home/ubuntu'}/.openclaw/openclaw.json`;
+    const configPath = '~/.openclaw/openclaw.json';
 
-    // Read current config using exec cat
+    // Read current config using read tool
     const readResponse = await invokeTool({
-        tool: 'exec',
+        tool: 'read',
         args: {
-            command: `cat ${configPath}`
+            file_path: configPath
         }
     });
 
-    const stdout = readResponse?.result?.stdout || readResponse?.stdout || readResponse?.output || '{}';
-    const config = JSON.parse(stdout);
+    const content = readResponse?.content || readResponse?.data || '{}';
+    const config = JSON.parse(content);
 
     // Apply updates to agents.defaults
     if (!config.agents) config.agents = {};
@@ -88,12 +88,13 @@ export async function updateAgentConfig(agentId, updates) {
         config.agents.defaults.workspace = updates.workspace;
     }
 
-    // Write back using exec with tee
+    // Write back using write tool
     const configStr = JSON.stringify(config, null, 2);
     await invokeTool({
-        tool: 'exec',
+        tool: 'write',
         args: {
-            command: `echo '${configStr.replace(/'/g, "'\\''")}' > ${configPath}`
+            file_path: configPath,
+            content: configStr
         }
     });
 
