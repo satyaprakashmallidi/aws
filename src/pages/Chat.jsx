@@ -16,6 +16,23 @@ const getOrCreateSessionKey = (agentId) => {
     return sessionKey;
 };
 
+const getLocalHistory = (sessionKey) => {
+    try {
+        const raw = localStorage.getItem(`openclaw.history.${sessionKey}`);
+        return raw ? JSON.parse(raw) : [];
+    } catch {
+        return [];
+    }
+};
+
+const setLocalHistory = (sessionKey, messages) => {
+    try {
+        localStorage.setItem(`openclaw.history.${sessionKey}`, JSON.stringify(messages));
+    } catch {
+        // Ignore storage errors (quota, private mode, etc.)
+    }
+};
+
 const Chat = () => {
     const [messages, setMessages] = useState([]);
     const [input, setInput] = useState('');
@@ -51,10 +68,24 @@ const Chat = () => {
 
             if (response.ok) {
                 const data = await response.json();
-                setMessages(data.messages || []);
+                const history = (data.messages || []).map(m => ({
+                    role: m.role,
+                    content: m.content,
+                    timestamp: m.created_at || m.timestamp
+                }));
+
+                if (history.length > 0) {
+                    setMessages(history);
+                    setLocalHistory(sessionKey, history);
+                } else {
+                    const localHistory = getLocalHistory(sessionKey);
+                    setMessages(localHistory);
+                }
             }
         } catch (error) {
             console.error('Failed to fetch chat history:', error);
+            const localHistory = getLocalHistory(sessionKey);
+            setMessages(localHistory);
         } finally {
             setLoading(false);
         }
@@ -71,7 +102,11 @@ const Chat = () => {
         };
 
         // Optimistically add user message
-        setMessages(prev => [...prev, userMessage]);
+        setMessages(prev => {
+            const next = [...prev, userMessage];
+            setLocalHistory(sessionKey, next);
+            return next;
+        });
         setInput('');
         setSending(true);
 
@@ -94,7 +129,11 @@ const Chat = () => {
                     content: data.choices[0].message.content,
                     timestamp: new Date().toISOString()
                 };
-                setMessages(prev => [...prev, botMessage]);
+                setMessages(prev => {
+                    const next = [...prev, botMessage];
+                    setLocalHistory(sessionKey, next);
+                    return next;
+                });
             }
         } catch (error) {
             console.error('Failed to send message:', error);
