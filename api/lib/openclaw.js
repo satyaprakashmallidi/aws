@@ -178,9 +178,11 @@ export async function listModels() {
 
     } catch (error) {
         console.error('[OpenClaw:Error] listModels: Failed completely:', error);
-        // Fallback
+        // Fallback: Return a default list of models so the UI doesn't break
         return [
-            { key: 'custom_openai/Kimi-K2.5', name: 'Kimi-K2.5 (Fallback)' }
+            { key: 'custom_openai/Kimi-K2.5', name: 'Kimi-K2.5' },
+            { key: 'custom_openai/Qwen-2.5', name: 'Qwen-2.5' },
+            { key: 'custom_openai/DeepSeek-V3', name: 'DeepSeek-V3' }
         ];
     }
 }

@@ -44,15 +44,22 @@ export async function getAgentConfig(agentId) {
     } catch (error) {
         console.warn(`Failed to read agent config: ${error.message}. Returning fallback.`);
 
+        // Return a valid default configuration so the UI still loads
         return {
             id: agentId,
-            description: 'AI Agent (Fallback Config)',
+            description: 'AI Agent (Gateway Unavailable)',
             model: 'custom_openai/Kimi-K2.5',
             identity: {
                 name: agentId === 'main' ? 'OpenClaw' : 'Agent',
-                emoji: '🦞'
+                emoji: '⚠️'
             },
             workspace: '/home/ubuntu/.openclaw/workspace',
+            availableModels: [
+                'custom_openai/Kimi-K2.5',
+                'custom_openai/Qwen-2.5',
+                'custom_openai/DeepSeek-V3'
+            ],
+            providers: ['custom_openai'],
             error: 'Configuration could not be loaded from Gateway.'
         };
     }
