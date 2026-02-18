@@ -38,7 +38,8 @@ export async function sendChatMessage({ userId, messages, agentId = 'main', sess
             },
             body: JSON.stringify({
                 model: `openclaw:${agentId}`,
-                user: `user:${userId}`, // Session isolation
+                // Use a stable user string so the gateway can derive a stable session key.
+                user: sessionKey || `user:${userId}`,
                 messages,
                 stream: false // Set to true for streaming responses
             }),

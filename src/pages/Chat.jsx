@@ -3,17 +3,38 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Send, Bot, User, Loader2, RefreshCw, Trash2 } from 'lucide-react';
 
+const getOrCreateSessionKey = (agentId) => {
+    const storageKey = `openclaw.session.${agentId}`;
+    const existing = localStorage.getItem(storageKey);
+    if (existing) return existing;
+
+    const uuid = (typeof crypto !== 'undefined' && crypto.randomUUID)
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const sessionKey = `agent:${agentId}:${uuid}`;
+    localStorage.setItem(storageKey, sessionKey);
+    return sessionKey;
+};
+
 const Chat = () => {
     const [messages, setMessages] = useState([]);
     const [input, setInput] = useState('');
     const [sending, setSending] = useState(false);
     const [loading, setLoading] = useState(true);
     const [agentId, setAgentId] = useState('main'); // Default to main agent
+    const [sessionKey, setSessionKey] = useState('');
     const messagesEndRef = useRef(null);
 
     useEffect(() => {
-        fetchHistory();
+        const key = getOrCreateSessionKey(agentId);
+        setSessionKey(key);
     }, [agentId]);
+
+    useEffect(() => {
+        if (sessionKey) {
+            fetchHistory();
+        }
+    }, [agentId, sessionKey]);
 
     useEffect(() => {
         scrollToBottom();
@@ -26,10 +47,7 @@ const Chat = () => {
     const fetchHistory = async () => {
         setLoading(true);
         try {
-            // Fetch history for the current agent session
-            // We use a convention for session keys: agent:{agentId}
-            const sessionKey = `agent:${agentId}`;
-            const response = await fetch(`/api/chat?action=history&sessionKey=${sessionKey}&limit=50`);
+            const response = await fetch(`/api/chat?action=history&sessionKey=${encodeURIComponent(sessionKey)}&limit=50`);
 
             if (response.ok) {
                 const data = await response.json();
@@ -64,7 +82,7 @@ const Chat = () => {
                 body: JSON.stringify({
                     message: userMessage.content,
                     agentId,
-                    sessionId: `agent:${agentId}` // Optional: for persistent storage if backend supports it
+                    sessionId: sessionKey
                 })
             });
 
