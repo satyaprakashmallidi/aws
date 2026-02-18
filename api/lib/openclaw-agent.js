@@ -6,54 +6,48 @@ import { invokeTool } from './openclaw.js';
  */
 export async function getAgentConfig(agentId) {
     try {
+        const configPath = `${process.env.HOME || '/home/ubuntu'}/.openclaw/openclaw.json`;
+        // Use exec tool instead of read (read tool is not available via HTTP)
         const response = await invokeTool({
-            tool: 'read',
+            tool: 'exec',
             args: {
-                path: `${process.env.HOME || '/home/ubuntu'}/.openclaw/openclaw.json`
+                command: `cat ${configPath}`
             }
         });
 
-        // Parse the config
-        const config = JSON.parse(response.content || '{}');
+        // Extract stdout from exec response
+        const stdout = response?.result?.stdout || response?.stdout || response?.output || '';
+        const config = JSON.parse(stdout || '{}');
 
-        // Find the specific agent
-        const agents = config.agents?.list || [];
-        const agent = agents.find(a => a.id === agentId);
+        // Extract agent info from actual config structure
+        const primary = config.agents?.defaults?.model?.primary || '';
+        const providers = config.models?.providers || {};
+        const identity = config.identity || { name: 'OpenClaw', emoji: '🦞' };
 
-        if (!agent) {
-            // If we can read but agent is not found, return default for main
-            if (agentId === 'main') {
-                return {
-                    id: 'main',
-                    description: 'Primary AI Agent',
-                    model: 'gemini-2.0-flash',
-                    identity: { name: 'OpenClaw', emoji: '🦞' }
-                };
+        // Build model list from providers
+        const modelList = [];
+        for (const [providerKey, provider] of Object.entries(providers)) {
+            for (const model of (provider.models || [])) {
+                modelList.push(`${providerKey}/${model.id}`);
             }
-            throw new Error(`Agent not found: ${agentId}`);
         }
 
         return {
-            id: agent.id,
-            workspace: agent.workspace,
-            model: agent.model,
-            identity: agent.identity,
-            tools: agent.tools,
-            skills: agent.skills,
-            thinkingLevel: agent.thinking?.level,
-            sandbox: agent.sandbox,
-            description: agent.description || '',
-            // Add any additional config fields
-            ...agent
+            id: agentId,
+            description: 'AI Agent',
+            model: primary,
+            identity,
+            workspace: config.agents?.defaults?.workspace || '/home/ubuntu/.openclaw/workspace',
+            availableModels: modelList,
+            providers: Object.keys(providers)
         };
     } catch (error) {
-        console.warn(`Failed to read agent config via tool 'read': ${error.message}. Returning fallback.`);
+        console.warn(`Failed to read agent config: ${error.message}. Returning fallback.`);
 
-        // Fallback for demo/unreachable gateway
         return {
             id: agentId,
-            description: 'Primary AI Agent (Fallback Config)',
-            model: 'gemini-2.0-flash',
+            description: 'AI Agent (Fallback Config)',
+            model: 'custom_openai/Kimi-K2.5',
             identity: {
                 name: agentId === 'main' ? 'OpenClaw' : 'Agent',
                 emoji: '🦞'
@@ -70,40 +64,44 @@ export async function getAgentConfig(agentId) {
  * @param {Object} updates - Config updates
  */
 export async function updateAgentConfig(agentId, updates) {
-    // First, read the current config
+    const configPath = `${process.env.HOME || '/home/ubuntu'}/.openclaw/openclaw.json`;
+
+    // Read current config using exec cat
     const readResponse = await invokeTool({
-        tool: 'read',
+        tool: 'exec',
         args: {
-            path: `${process.env.HOME || '/home/ubuntu'}/.openclaw/openclaw.json`
+            command: `cat ${configPath}`
         }
     });
 
-    const config = JSON.parse(readResponse.content || '{}');
+    const stdout = readResponse?.result?.stdout || readResponse?.stdout || readResponse?.output || '{}';
+    const config = JSON.parse(stdout);
 
-    // Find and update the agent
-    const agents = config.agents?.list || [];
-    const agentIndex = agents.findIndex(a => a.id === agentId);
+    // Apply updates to agents.defaults
+    if (!config.agents) config.agents = {};
+    if (!config.agents.defaults) config.agents.defaults = {};
 
-    if (agentIndex === -1) {
-        throw new Error(`Agent not found: ${agentId}`);
+    if (updates.model) {
+        config.agents.defaults.model = { primary: updates.model };
+    }
+    if (updates.workspace) {
+        config.agents.defaults.workspace = updates.workspace;
     }
 
-    // Merge updates
-    agents[agentIndex] = {
-        ...agents[agentIndex],
-        ...updates
-    };
-
-    // Write back the config
+    // Write back using exec with tee
+    const configStr = JSON.stringify(config, null, 2);
     await invokeTool({
-        tool: 'write',
+        tool: 'exec',
         args: {
-            path: `${process.env.HOME || '/home/ubuntu'}/.openclaw/openclaw.json`,
-            content: JSON.stringify(config, null, 2)
+            command: `echo '${configStr.replace(/'/g, "'\\''")}' > ${configPath}`
         }
     });
 
-    return agents[agentIndex];
+    return {
+        id: agentId,
+        ...config.agents.defaults,
+        ...updates
+    };
 }
 
 /**

@@ -147,48 +147,33 @@ export async function listModels() {
         const configPath = '/home/ubuntu/.openclaw/openclaw.json';
         debugLog('listModels:reading_config', { path: configPath });
 
+        // Use exec tool to cat the config file (read tool is not available via HTTP)
         const response = await invokeTool({
-            tool: 'read',
+            tool: 'exec',
             args: {
-                path: configPath
+                command: `cat ${configPath}`
             }
         });
 
-        debugLog('listModels:read_response_type', {
+        debugLog('listModels:exec_response', {
             responseType: typeof response,
-            keys: response ? Object.keys(response) : [],
-            hasContent: !!response?.content
+            keys: response ? Object.keys(response) : []
         });
 
-        // 1. Direct JSON Object
-        if (response && response.agents && response.models) {
-            debugLog('listModels:format_direct_json', {});
-            return parseModelsFromConfig(response);
-        }
+        // Extract stdout from exec response
+        const stdout = response?.result?.stdout || response?.stdout || response?.output || '';
 
-        // 2. Extracted Content (String)
-        const fileContent = response.content || response.data || (typeof response === 'string' ? response : null);
-
-        if (!fileContent) {
-            console.error('[OpenClaw:Error] listModels: Empty response from read tool', response);
-            throw new Error('Empty response from read tool');
+        if (!stdout) {
+            console.error('[OpenClaw:Error] listModels: Empty stdout from exec tool');
+            throw new Error('Empty response from exec cat');
         }
 
         let config = null;
-        if (typeof fileContent === 'object') {
-            debugLog('listModels:format_nested_object', {});
-            config = fileContent;
-        } else {
-            try {
-                // Check if content looks like JSON
-                const preview = fileContent.substring(0, 50);
-                debugLog('listModels:parsing_string', { preview });
-
-                config = JSON.parse(fileContent);
-            } catch (e) {
-                console.error('[OpenClaw:Error] listModels: JSON Parse error on content:', e);
-                throw new Error('Invalid JSON in openclaw.json');
-            }
+        try {
+            config = JSON.parse(stdout);
+        } catch (e) {
+            console.error('[OpenClaw:Error] listModels: JSON Parse error:', e.message);
+            throw new Error('Invalid JSON in openclaw.json');
         }
 
         const models = parseModelsFromConfig(config);
@@ -199,40 +184,49 @@ export async function listModels() {
         console.error('[OpenClaw:Error] listModels: Failed completely:', error);
         // Fallback
         return [
-            { key: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash (Fallback)' },
-            { key: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro (Fallback)' },
-            { key: 'claude-3-5-sonnet', name: 'Claude 3.5 Sonnet (Fallback)' },
-            { key: 'gpt-4o', name: 'GPT-4o (Fallback)' },
-            { key: 'gpt-4o-mini', name: 'GPT-4o Mini (Fallback)' },
-            { key: 'deepseek-r1', name: 'DeepSeek R1 (Fallback)' }
+            { key: 'custom_openai/Kimi-K2.5', name: 'Kimi-K2.5 (Fallback)' }
         ];
     }
 }
 
 function parseModelsFromConfig(config) {
     const models = [];
+    const seen = new Set();
 
     // 1. Add Primary Model
     const primary = config.agents?.defaults?.model?.primary;
     if (primary) {
-        models.push({ key: primary, name: primary + ' (Primary)', tags: ['primary'] });
+        models.push({ key: primary, name: primary.split('/').pop() + ' (Primary)', tags: ['primary'] });
+        seen.add(primary);
     }
 
-    // 2. Add Fallback Models
-    const fallbacks = config.agents?.defaults?.model?.fallbacks || [];
-    fallbacks.forEach(db => {
-        if (!models.find(m => m.key === db)) {
-            models.push({ key: db, name: db, tags: ['fallback'] });
+    // 2. Parse models from models.providers (the actual config structure)
+    const providers = config.models?.providers || {};
+    for (const [providerKey, provider] of Object.entries(providers)) {
+        const providerModels = provider.models || [];
+        for (const model of providerModels) {
+            const modelKey = `${providerKey}/${model.id}`;
+            if (!seen.has(modelKey)) {
+                models.push({
+                    key: modelKey,
+                    name: model.name || model.id,
+                    tags: ['configured'],
+                    provider: providerKey,
+                    api: model.api || provider.api
+                });
+                seen.add(modelKey);
+            }
         }
-    });
+    }
 
-    // 3. Add Configured Models
-    const configured = config.agents?.defaults?.models || {};
-    Object.keys(configured).forEach(key => {
-        if (!models.find(m => m.key === key)) {
-            models.push({ key: key, name: key, tags: ['configured'] });
+    // 3. Add Fallback Models
+    const fallbacks = config.agents?.defaults?.model?.fallbacks || [];
+    for (const fb of fallbacks) {
+        if (!seen.has(fb)) {
+            models.push({ key: fb, name: fb, tags: ['fallback'] });
+            seen.add(fb);
         }
-    });
+    }
 
     return models;
 }
@@ -242,25 +236,39 @@ function parseModelsFromConfig(config) {
  */
 export async function getHealth() {
     try {
-        const response = await fetch(`${GATEWAY_URL}/health`);
-        if (response.ok) {
-            const data = await response.json();
-            return {
-                status: 'online',
-                gateway_url: GATEWAY_URL,
-                timestamp: new Date().toISOString(),
-                ...data
-            };
-        }
+        // Try the chat completions endpoint with a lightweight check
+        // The /health endpoint returns HTML (Control UI), not JSON
+        const response = await fetch(`${GATEWAY_URL}/v1/chat/completions`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${GATEWAY_TOKEN}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                model: 'health-check',
+                messages: [{ role: 'user', content: 'ping' }],
+                max_tokens: 1
+            }),
+            cache: 'no-store',
+            signal: AbortSignal.timeout(5000)
+        });
+
+        // Any response (even 4xx) means the gateway is online and reachable
+        return {
+            status: 'online',
+            gateway_url: GATEWAY_URL,
+            timestamp: new Date().toISOString(),
+            message: 'Gateway is running and reachable'
+        };
     } catch (e) {
-        console.error('Health check failed:', e);
+        // Network error = gateway is truly offline
+        console.error('Health check failed:', e.message);
     }
 
     return {
-        status: 'online',
+        status: 'offline',
         gateway_url: GATEWAY_URL,
         timestamp: new Date().toISOString(),
-        message: 'Gateway connection configured',
-        note: 'Use /api/agents/list to verify connectivity'
+        message: 'Gateway is not reachable'
     };
 }
