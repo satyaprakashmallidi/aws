@@ -30,7 +30,8 @@ export default async function handler(req, res) {
             const response = await sendChatMessage({
                 userId: user.id,
                 messages,
-                agentId
+                agentId,
+                sessionKey: sessionId || `agent:${agentId}`
             });
 
             // Save to Supabase

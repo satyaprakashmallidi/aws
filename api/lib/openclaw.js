@@ -15,8 +15,8 @@ function debugLog(context, data) {
  * @param {Array} options.messages - Chat messages
  * @param {string} options.agentId - Agent ID (optional, defaults to 'main')
  */
-export async function sendChatMessage({ userId, messages, agentId = 'main' }) {
-    debugLog('sendChatMessage:start', { userId, agentId, messageCount: messages?.length });
+export async function sendChatMessage({ userId, messages, agentId = 'main', sessionKey }) {
+    debugLog('sendChatMessage:start', { userId, agentId, sessionKey, messageCount: messages?.length });
 
     if (!GATEWAY_URL || !GATEWAY_TOKEN) {
         console.error('[OpenClaw:Error] Missing Env Vars');
@@ -33,7 +33,8 @@ export async function sendChatMessage({ userId, messages, agentId = 'main' }) {
                 'Authorization': `Bearer ${GATEWAY_TOKEN}`,
                 'Content-Type': 'application/json',
                 'Accept': 'application/json',
-                ...(agentId !== 'main' && { 'x-openclaw-agent-id': agentId })
+                ...(agentId !== 'main' && { 'x-openclaw-agent-id': agentId }),
+                ...(sessionKey && { 'x-openclaw-session-key': sessionKey })
             },
             body: JSON.stringify({
                 model: `openclaw:${agentId}`,
