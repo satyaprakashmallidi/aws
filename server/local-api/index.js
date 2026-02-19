@@ -1,0 +1,315 @@
+import express from 'express';
+import fs from 'fs';
+import path from 'path';
+import os from 'os';
+import cors from 'cors';
+
+const app = express();
+
+const HOME = os.homedir();
+const OPENCLAW_DIR = process.env.OPENCLAW_DIR || path.join(HOME, '.openclaw');
+const OPENCLAW_CONFIG_PATH = process.env.OPENCLAW_CONFIG_PATH || path.join(OPENCLAW_DIR, 'openclaw.json');
+const WORKSPACE_DIR = process.env.OPENCLAW_WORKSPACE || path.join(OPENCLAW_DIR, 'workspace');
+const SOUL_PATHS = [
+    path.join(OPENCLAW_DIR, 'memory', 'SOUL.md'),
+    path.join(OPENCLAW_DIR, 'SOUL.md')
+];
+
+const GATEWAY_URL = process.env.OPENCLAW_GATEWAY_URL || 'http://127.0.0.1:18789';
+const GATEWAY_TOKEN = process.env.OPENCLAW_GATEWAY_TOKEN;
+
+app.use(cors());
+app.use(express.json({ limit: '2mb' }));
+
+function readJson(filePath) {
+    return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+}
+
+function writeJson(filePath, data) {
+    fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
+}
+
+function listModelsFromConfig(config) {
+    const models = [];
+    const seen = new Set();
+    const primary = config?.agents?.defaults?.model?.primary;
+    if (primary) {
+        models.push({ key: primary, name: primary.split('/').pop() });
+        seen.add(primary);
+    }
+    const fallbacks = config?.agents?.defaults?.model?.fallbacks || [];
+    for (const fb of fallbacks) {
+        if (!seen.has(fb)) {
+            models.push({ key: fb, name: fb.split('/').pop() });
+            seen.add(fb);
+        }
+    }
+    const providers = config?.models?.providers || {};
+    for (const [providerKey, provider] of Object.entries(providers)) {
+        for (const model of (provider.models || [])) {
+            const key = `${providerKey}/${model.id}`;
+            if (seen.has(key)) continue;
+            models.push({ key, name: model.name || model.id });
+            seen.add(key);
+        }
+    }
+    return models;
+}
+
+function safeWorkspacePath(name) {
+    if (!name || typeof name !== 'string') return null;
+    const normalized = name.replace(/\\/g, '/').trim();
+    if (normalized.startsWith('/') || normalized.includes('..')) return null;
+    return path.join(WORKSPACE_DIR, normalized);
+}
+
+async function invokeTool(tool, args = {}) {
+    if (!GATEWAY_TOKEN) {
+        throw new Error('OPENCLAW_GATEWAY_TOKEN not set');
+    }
+    const response = await fetch(`${GATEWAY_URL.replace(/\/$/, '')}/tools/invoke`, {
+        method: 'POST',
+        headers: {
+            'Authorization': `Bearer ${GATEWAY_TOKEN}`,
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ tool, args })
+    });
+    if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`Tools API error (${response.status}): ${text}`);
+    }
+    return response.json();
+}
+
+app.get('/api/health', (req, res) => {
+    res.json({ ok: true, ts: new Date().toISOString() });
+});
+
+app.get('/api/models', (req, res) => {
+    try {
+        const config = readJson(OPENCLAW_CONFIG_PATH);
+        const models = listModelsFromConfig(config);
+        const currentModel = config?.agents?.defaults?.model?.primary || '';
+        res.json({ models, currentModel });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.post('/api/model', (req, res) => {
+    const { model } = req.body || {};
+    if (!model) return res.status(400).json({ error: 'Model is required' });
+    try {
+        const config = readJson(OPENCLAW_CONFIG_PATH);
+        if (!config.agents) config.agents = {};
+        if (!config.agents.defaults) config.agents.defaults = {};
+        if (!config.agents.defaults.model) config.agents.defaults.model = {};
+        config.agents.defaults.model.primary = model;
+        writeJson(OPENCLAW_CONFIG_PATH, config);
+        res.json({ ok: true, model });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.get('/api/soul', (req, res) => {
+    try {
+        for (const filePath of SOUL_PATHS) {
+            if (fs.existsSync(filePath)) {
+                const content = fs.readFileSync(filePath, 'utf8');
+                return res.json({ path: filePath, content });
+            }
+        }
+        res.status(404).json({ error: 'SOUL.md not found' });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.put('/api/soul', (req, res) => {
+    const { content } = req.body || {};
+    if (typeof content !== 'string') return res.status(400).json({ error: 'Content is required' });
+    try {
+        const filePath = SOUL_PATHS.find(p => fs.existsSync(p)) || SOUL_PATHS[0];
+        fs.writeFileSync(filePath, content);
+        res.json({ ok: true, path: filePath });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.get('/api/workspace-file', (req, res) => {
+    const filePath = safeWorkspacePath(req.query.name);
+    if (!filePath) return res.status(400).json({ error: 'Invalid file name' });
+    try {
+        const content = fs.readFileSync(filePath, 'utf8');
+        res.json({ path: filePath, content });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.put('/api/workspace-file', (req, res) => {
+    const filePath = safeWorkspacePath(req.query.name);
+    const { content } = req.body || {};
+    if (!filePath) return res.status(400).json({ error: 'Invalid file name' });
+    if (typeof content !== 'string') return res.status(400).json({ error: 'Content is required' });
+    try {
+        fs.mkdirSync(path.dirname(filePath), { recursive: true });
+        fs.writeFileSync(filePath, content);
+        res.json({ ok: true, path: filePath });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.get('/api/agents', async (req, res) => {
+    try {
+        const { action } = req.query;
+        if (action === 'status') {
+            const response = await invokeTool('sessions_list', { activeMinutes: 60 });
+            return res.json(response);
+        }
+        if (action === 'models') {
+            const config = readJson(OPENCLAW_CONFIG_PATH);
+            return res.json(listModelsFromConfig(config));
+        }
+        const response = await invokeTool('agents_list', {});
+        res.json(response);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.post('/api/chat', async (req, res) => {
+    try {
+        const { message, agentId = 'main', sessionId, stream } = req.body || {};
+        if (!message) return res.status(400).json({ error: 'Message required' });
+        const payload = {
+            model: `openclaw:${agentId}`,
+            user: sessionId || `user:local`,
+            messages: [{ role: 'user', content: message }],
+            stream: Boolean(stream)
+        };
+        const response = await fetch(`${GATEWAY_URL.replace(/\/$/, '')}/v1/chat/completions`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${GATEWAY_TOKEN}`,
+                'Content-Type': 'application/json',
+                ...(agentId !== 'main' ? { 'x-openclaw-agent-id': agentId } : {}),
+                ...(sessionId ? { 'x-openclaw-session-key': sessionId } : {})
+            },
+            body: JSON.stringify(payload)
+        });
+        if (!response.ok) {
+            const text = await response.text();
+            return res.status(response.status).send(text);
+        }
+        if (stream) {
+            res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+            res.setHeader('Cache-Control', 'no-store');
+            response.body.pipeTo(WritableStreamToNode(res));
+            return;
+        }
+        const data = await response.json();
+        res.json(data);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.get('/api/chat', async (req, res) => {
+    const { action, sessionKey, limit, includeTools } = req.query;
+    if (action !== 'history') return res.status(400).json({ error: 'Invalid action' });
+    try {
+        const response = await invokeTool('sessions_history', {
+            sessionKey,
+            limit: limit ? parseInt(limit, 10) : 50,
+            includeTools: includeTools === 'true'
+        });
+        res.json(response);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.get('/api/tasks', async (req, res) => {
+    try {
+        const response = await invokeTool('cron', { action: 'list', includeDisabled: true });
+        res.json(response);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.post('/api/tasks', async (req, res) => {
+    try {
+        const response = await invokeTool('cron', { action: 'add', job: req.body });
+        res.json(response);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.post('/api/tasks/:id/run', async (req, res) => {
+    try {
+        const response = await invokeTool('cron', { action: 'run', jobId: req.params.id });
+        res.json(response);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.post('/api/tasks/:id/pickup', async (req, res) => {
+    try {
+        const response = await invokeTool('cron', {
+            action: 'update',
+            jobId: req.params.id,
+            updates: {
+                metadata: {
+                    status: 'picked_up',
+                    pickedUpAt: new Date().toISOString()
+                }
+            }
+        });
+        res.json(response);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.post('/api/tasks/:id/complete', async (req, res) => {
+    try {
+        const response = await invokeTool('cron', {
+            action: 'update',
+            jobId: req.params.id,
+            updates: {
+                metadata: {
+                    status: 'completed',
+                    completedAt: new Date().toISOString(),
+                    result: req.body?.result || null
+                }
+            }
+        });
+        res.json(response);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+const PORT = process.env.LOCAL_API_PORT ? Number(process.env.LOCAL_API_PORT) : 3333;
+app.listen(PORT, '127.0.0.1', () => {
+    console.log(`OpenClaw local API running on http://127.0.0.1:${PORT}`);
+});
+
+function WritableStreamToNode(res) {
+    return new WritableStream({
+        write(chunk) {
+            res.write(Buffer.from(chunk));
+        },
+        close() {
+            res.end();
+        }
+    });
+}

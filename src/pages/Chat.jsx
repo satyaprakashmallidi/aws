@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { apiUrl } from '../lib/apiBase';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Send, Bot, User, Loader2, RefreshCw, Trash2 } from 'lucide-react';
@@ -64,7 +65,7 @@ const Chat = () => {
     const fetchHistory = async () => {
         setLoading(true);
         try {
-            const response = await fetch(`/api/chat?action=history&sessionKey=${encodeURIComponent(sessionKey)}&limit=50`);
+            const response = await fetch(apiUrl(`/api/chat?action=history&sessionKey=${encodeURIComponent(sessionKey)}&limit=50`));
 
             if (response.ok) {
                 const data = await response.json();
@@ -111,7 +112,7 @@ const Chat = () => {
         setSending(true);
 
         try {
-            const response = await fetch('/api/chat', {
+            const response = await fetch(apiUrl('/api/chat'), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({

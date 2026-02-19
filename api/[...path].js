@@ -1,5 +1,5 @@
 import { Readable } from 'stream';
-import { listAgents, listModels, sendChatMessage, sendChatMessageStream, invokeTool, getHealth, getGatewayConfig, readFile, writeFile } from './lib/openclaw.js';
+import { listAgents, listModels, sendChatMessage, sendChatMessageStream, invokeTool, getHealth, readFile, writeFile } from './lib/openclaw.js';
 import { getAgentConfig, updateAgentConfig, getAgentStatus } from './lib/openclaw-agent.js';
 import { getChatHistory, listSessions } from './lib/openclaw-chat.js';
 import { listCronJobs, addCronJob, updateCronJob, deleteCronJob, runCronJob } from './lib/openclaw-cron.js';
@@ -315,12 +315,8 @@ export default async function handler(req, res) {
     if (resource === 'models') {
         if (req.method !== 'GET') return sendJson(res, 405, { error: 'Method not allowed' });
         try {
-            const [models, config] = await Promise.all([
-                listModels(),
-                getGatewayConfig().catch(() => ({}))
-            ]);
-            const currentModel = config?.agents?.defaults?.model?.primary || '';
-            return sendJson(res, 200, { models, currentModel });
+            const models = await listModels();
+            return sendJson(res, 200, { models, currentModel: '' });
         } catch (error) {
             return sendJson(res, 500, { error: error.message });
         }
@@ -329,20 +325,9 @@ export default async function handler(req, res) {
     // /api/model
     if (resource === 'model') {
         if (req.method !== 'POST') return sendJson(res, 405, { error: 'Method not allowed' });
-        const { model } = req.body || {};
-        if (!model) return sendJson(res, 400, { error: 'Model is required' });
-        try {
-        const config = await getGatewayConfig();
-            if (!config.agents) config.agents = {};
-            if (!config.agents.defaults) config.agents.defaults = {};
-            if (!config.agents.defaults.model) config.agents.defaults.model = {};
-            config.agents.defaults.model.primary = model;
-            const content = JSON.stringify(config, null, 2);
-            await writeFile(OPENCLAW_CONFIG_PATH, content);
-            return sendJson(res, 200, { ok: true, model });
-        } catch (error) {
-            return sendJson(res, 500, { error: error.message });
-        }
+        return sendJson(res, 501, {
+            error: 'Model updates are not available (gateway config tool not exposed).'
+        });
     }
 
     // /api/soul
@@ -352,7 +337,7 @@ export default async function handler(req, res) {
                 const { filePath, content } = await readFirstExisting(SOUL_PATH_CANDIDATES);
                 return sendJson(res, 200, { path: filePath, content });
             } catch (error) {
-                return sendJson(res, 500, { error: error.message });
+                return sendJson(res, 501, { error: 'SOUL.md access not available', details: error.message });
             }
         }
 
@@ -370,7 +355,7 @@ export default async function handler(req, res) {
                 await writeFile(filePath, content);
                 return sendJson(res, 200, { ok: true, path: filePath });
             } catch (error) {
-                return sendJson(res, 500, { error: error.message });
+                return sendJson(res, 501, { error: 'SOUL.md access not available', details: error.message });
             }
         }
 
@@ -385,10 +370,10 @@ export default async function handler(req, res) {
 
         if (req.method === 'GET') {
             try {
-            const content = await readFile(filePath);
-            return sendJson(res, 200, { path: filePath, content });
-        } catch (error) {
-            return sendJson(res, 500, { error: error.message });
+                const content = await readFile(filePath);
+                return sendJson(res, 200, { path: filePath, content });
+            } catch (error) {
+                return sendJson(res, 501, { error: 'Workspace file access not available', details: error.message });
             }
         }
 
@@ -396,10 +381,10 @@ export default async function handler(req, res) {
             const { content } = req.body || {};
             if (typeof content !== 'string') return sendJson(res, 400, { error: 'Content is required' });
             try {
-            await writeFile(filePath, content);
-            return sendJson(res, 200, { ok: true, path: filePath });
-        } catch (error) {
-            return sendJson(res, 500, { error: error.message });
+                await writeFile(filePath, content);
+                return sendJson(res, 200, { ok: true, path: filePath });
+            } catch (error) {
+                return sendJson(res, 501, { error: 'Workspace file access not available', details: error.message });
             }
         }
 

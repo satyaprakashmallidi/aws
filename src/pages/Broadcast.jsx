@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { apiUrl } from '../lib/apiBase';
 import { Send, CheckCircle, AlertCircle, Loader2 } from 'lucide-react';
 
 const Broadcast = () => {
@@ -14,7 +15,7 @@ const Broadcast = () => {
 
     const fetchAgents = async () => {
         try {
-            const response = await fetch('/api/agents');
+            const response = await fetch(apiUrl('/api/agents'));
             const data = await response.json();
             setAgents(data.agents || []);
             // Select all by default
@@ -48,7 +49,7 @@ const Broadcast = () => {
         setResults(null);
 
         try {
-            const response = await fetch('/api/broadcast', {
+            const response = await fetch(apiUrl('/api/broadcast'), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({

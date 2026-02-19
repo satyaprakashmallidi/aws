@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { apiUrl } from '../lib/apiBase';
 import { X, Save, AlertCircle } from 'lucide-react';
 
 const AgentSettingsModal = ({ agent, isOpen, onClose, onUpdate }) => {
@@ -18,7 +19,7 @@ const AgentSettingsModal = ({ agent, isOpen, onClose, onUpdate }) => {
             const timestamp = Date.now();
             // Fetch models
             setLoadingModels(true);
-            fetch(`/api/agents?action=models&t=${timestamp}`)
+            fetch(apiUrl(`/api/agents?action=models&t=${timestamp}`))
                 .then(res => res.json())
                 .then(data => {
                     setAvailableModels(Array.isArray(data) ? data : []);
@@ -27,7 +28,7 @@ const AgentSettingsModal = ({ agent, isOpen, onClose, onUpdate }) => {
                 .finally(() => setLoadingModels(false));
 
             // Fetch full agent config
-            fetch(`/api/agents?id=${agent.id}&t=${timestamp}`)
+            fetch(apiUrl(`/api/agents?id=${agent.id}&t=${timestamp}`))
                 .then(res => res.json())
                 .then(fullConfig => {
                     setFormData({
@@ -59,7 +60,7 @@ const AgentSettingsModal = ({ agent, isOpen, onClose, onUpdate }) => {
                 }
             };
 
-            const response = await fetch(`/api/agents?id=${agent.id}`, {
+            const response = await fetch(apiUrl(`/api/agents?id=${agent.id}`), {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(updates)

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { apiUrl } from '../lib/apiBase';
 import { Settings, Circle, Cpu, Users } from 'lucide-react';
 
 const AgentSidebar = ({ onAgentClick, selectedAgentId }) => {
@@ -12,7 +13,7 @@ const AgentSidebar = ({ onAgentClick, selectedAgentId }) => {
 
     const fetchAgents = async () => {
         try {
-            const response = await fetch('/api/agents');
+            const response = await fetch(apiUrl('/api/agents'));
             if (!response.ok) throw new Error('Failed to fetch agents');
             const data = await response.json();
             setAgents(data.agents || []);

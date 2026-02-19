@@ -33,6 +33,36 @@ export async function getAgentConfig(agentId) {
     } catch (error) {
         console.warn(`Failed to read agent config: ${error.message}. Returning fallback.`);
 
+        try {
+            const response = await invokeTool({
+                tool: 'sessions_list',
+                args: { activeMinutes: 1440, limit: 200 }
+            });
+            const details = response?.result?.details || {};
+            const sessions = details.sessions || response.sessions || [];
+            const match = sessions.find(session => {
+                const key = session?.key || session?.sessionKey || '';
+                return key.includes(`agent:${agentId}:`) || key === `agent:${agentId}`;
+            });
+            const model = match?.model || 'unknown';
+
+            return {
+                id: agentId,
+                description: 'AI Agent',
+                model,
+                identity: {
+                    name: agentId === 'main' ? 'OpenClaw' : 'Agent',
+                    emoji: 'ðŸ¤–'
+                },
+                workspace: '/home/ubuntu/.openclaw/workspace',
+                availableModels: model && model !== 'unknown' ? [model] : [],
+                providers: [],
+                note: 'Limited agent data (gateway config tool unavailable).'
+            };
+        } catch {
+            // continue to fallback below
+        }
+
         // Return a valid default configuration so the UI still loads
         return {
             id: agentId,
@@ -60,6 +90,8 @@ export async function getAgentConfig(agentId) {
  * @param {Object} updates - Config updates
  */
 export async function updateAgentConfig(agentId, updates) {
+    throw new Error('Agent config updates are not available (gateway config tool not exposed).');
+
     const configPath = '~/.openclaw/openclaw.json';
 
     const config = await getGatewayConfig();

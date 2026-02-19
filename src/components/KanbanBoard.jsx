@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { apiUrl } from '../lib/apiBase';
 import { Plus, MoreHorizontal, Calendar, Play } from 'lucide-react';
 
 const COLUMNS = [
@@ -19,7 +20,7 @@ const KanbanBoard = () => {
 
     const fetchTasks = async () => {
         try {
-            const response = await fetch(`/api/tasks?t=${Date.now()}`);
+            const response = await fetch(apiUrl(`/api/tasks?t=${Date.now()}`));
             if (response.ok) {
                 const data = await response.json();
                 setTasks(data.jobs || []);
@@ -48,7 +49,7 @@ const KanbanBoard = () => {
 
     const handlePickup = async (taskId) => {
         try {
-            await fetch(`/api/tasks/${encodeURIComponent(taskId)}/pickup`, { method: 'POST' });
+            await fetch(apiUrl(`/api/tasks/${encodeURIComponent(taskId)}/pickup`), { method: 'POST' });
             fetchTasks();
         } catch (error) {
             console.error('Failed to pickup task:', error);
@@ -58,7 +59,7 @@ const KanbanBoard = () => {
     const handleComplete = async (taskId) => {
         const result = prompt('Result (optional):') || '';
         try {
-            await fetch(`/api/tasks/${encodeURIComponent(taskId)}/complete`, {
+            await fetch(apiUrl(`/api/tasks/${encodeURIComponent(taskId)}/complete`), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ result })

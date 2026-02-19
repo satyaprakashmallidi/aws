@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { apiUrl } from '../lib/apiBase';
 import { Save, RefreshCw } from 'lucide-react';
 
 const TABS = [
@@ -50,7 +51,7 @@ const ModelsTab = () => {
         setError('');
         setStatus('');
         try {
-            const response = await fetch('/api/models');
+            const response = await fetch(apiUrl('/api/models'));
             if (!response.ok) throw new Error('Failed to load models');
             const data = await response.json();
             setModels(data.models || []);
@@ -73,7 +74,7 @@ const ModelsTab = () => {
         setError('');
         setStatus('');
         try {
-            const response = await fetch('/api/model', {
+            const response = await fetch(apiUrl('/api/model'), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ model: selectedModel })
@@ -166,7 +167,7 @@ const SoulTab = () => {
         setError('');
         setStatus('');
         try {
-            const response = await fetch('/api/soul');
+            const response = await fetch(apiUrl('/api/soul'));
             if (!response.ok) throw new Error('Failed to load SOUL.md');
             const data = await response.json();
             setContent(data.content || '');
@@ -187,7 +188,7 @@ const SoulTab = () => {
         setError('');
         setStatus('');
         try {
-            const response = await fetch('/api/soul', {
+            const response = await fetch(apiUrl('/api/soul'), {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ content })
@@ -261,7 +262,7 @@ const WorkspaceFileTab = () => {
         setError('');
         setStatus('');
         try {
-            const response = await fetch(`/api/workspace-file?name=${encodeURIComponent(fileName)}`);
+            const response = await fetch(apiUrl(`/api/workspace-file?name=${encodeURIComponent(fileName)}`));
             if (!response.ok) {
                 const data = await response.json().catch(() => ({}));
                 throw new Error(data.error || 'Failed to load file');
@@ -281,7 +282,7 @@ const WorkspaceFileTab = () => {
         setError('');
         setStatus('');
         try {
-            const response = await fetch(`/api/workspace-file?name=${encodeURIComponent(fileName)}`, {
+            const response = await fetch(apiUrl(`/api/workspace-file?name=${encodeURIComponent(fileName)}`), {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ content })

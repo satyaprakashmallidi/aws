@@ -301,10 +301,35 @@ export async function listModels() {
             return response.result.details.models;
         }
 
-        // Fallback: If models_list not available, try gateway config
-        console.warn('models_list tool didn\'t return expected format, trying gateway config...');
-        const config = await getGatewayConfig();
-        return parseModelsFromConfig(config);
+        // Fallback: If models_list not available, try sessions list
+        console.warn('models_list tool didn\'t return expected format, trying sessions_list...');
+        const sessionsResponse = await invokeTool({
+            tool: 'sessions_list',
+            args: { activeMinutes: 1440, limit: 200 }
+        });
+        const details = sessionsResponse?.result?.details || {};
+        const sessions = details.sessions || sessionsResponse.sessions || [];
+        const models = [];
+        const seen = new Set();
+        for (const session of sessions) {
+            const model = session?.model;
+            if (model && !seen.has(model)) {
+                seen.add(model);
+                models.push({ key: model, name: model });
+            }
+        }
+        if (models.length > 0) {
+            return models;
+        }
+
+        // Final fallback: Use a safe default list so UI doesn't break
+        console.warn('sessions_list had no models, returning fallback list.');
+        return [
+            { key: 'google-antigravity/claude-opus-4-6-thinking', name: 'claude-opus-4-6-thinking' },
+            { key: 'google-antigravity/gemini-3-flash', name: 'gemini-3-flash' },
+            { key: 'google-antigravity/gemini-3-pro-high', name: 'gemini-3-pro-high' },
+            { key: 'google-antigravity/gemini-3-pro-low', name: 'gemini-3-pro-low' }
+        ];
 
         throw new Error('Could not list models via models_list or read config options');
 

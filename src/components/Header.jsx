@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { UserButton } from "@clerk/clerk-react";
 import { health } from '../lib/api';
+import { apiUrl } from '../lib/apiBase';
 
 const Header = () => {
     const location = useLocation();
@@ -21,7 +22,7 @@ const Header = () => {
             setGatewayStatus('online');
 
             // Get active agent count
-            const response = await fetch(`/api/agents?action=status&t=${Date.now()}`);
+            const response = await fetch(apiUrl(`/api/agents?action=status&t=${Date.now()}`));
             const data = await response.json();
             setActiveAgentCount(data.activeCount || 0);
         } catch (error) {
