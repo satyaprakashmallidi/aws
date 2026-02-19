@@ -57,6 +57,24 @@ const SignUpPage = () => {
         }
     };
 
+    const handleGoogle = async () => {
+        if (!isLoaded) return;
+        setLoading(true);
+        setError('');
+        try {
+            await signUp.authenticateWithRedirect({
+                strategy: 'oauth_google',
+                redirectUrl: '/sign-up',
+                redirectUrlComplete: '/app'
+            });
+        } catch (err) {
+            const message = err?.errors?.[0]?.message || err?.message || 'Failed to start Google sign-up';
+            setError(message);
+        } finally {
+            setLoading(false);
+        }
+    };
+
     return (
         <div className="min-h-screen bg-slate-950 text-white selection:bg-cyan-500 selection:text-white flex items-center justify-center px-6 py-12">
             <div className="w-full max-w-md bg-slate-900/60 border border-slate-800 rounded-2xl p-8 shadow-2xl">
@@ -77,6 +95,17 @@ const SignUpPage = () => {
 
                 {step === 'form' && (
                     <form onSubmit={handleSubmit} className="space-y-4">
+                        <button
+                            type="button"
+                            onClick={handleGoogle}
+                            disabled={!isLoaded || loading}
+                            className="w-full px-4 py-2 bg-white text-slate-900 rounded-lg font-semibold hover:bg-slate-100 transition-colors disabled:opacity-50"
+                        >
+                            Continue with Google
+                        </button>
+
+                        <div className="text-xs text-slate-500 text-center">or</div>
+
                         <div>
                             <label className="block text-xs font-medium text-slate-400 mb-1">Email</label>
                             <input
