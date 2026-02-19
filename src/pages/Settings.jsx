@@ -39,10 +39,19 @@ const Settings = () => {
     );
 };
 
+const PROVIDERS = [
+    { key: 'google-antigravity', label: 'Google Antigravity' },
+    { key: 'openai', label: 'OpenAI' },
+    { key: 'azure', label: 'Azure OpenAI' },
+    { key: 'anthropic', label: 'Anthropic' },
+    { key: 'gemini', label: 'Gemini' }
+];
+
 const ModelsTab = () => {
     const [models, setModels] = useState([]);
     const [currentModel, setCurrentModel] = useState('');
     const [selectedModel, setSelectedModel] = useState('');
+    const [selectedProvider, setSelectedProvider] = useState(PROVIDERS[0].key);
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState('');
@@ -94,6 +103,33 @@ const ModelsTab = () => {
         }
     };
 
+    const handleConnectProvider = async () => {
+        setSaving(true);
+        setError('');
+        setStatus('');
+        try {
+            const response = await fetch(apiUrl('/api/providers/connect'), {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...(import.meta.env.VITE_LOCAL_API_SECRET
+                        ? { 'x-api-secret': import.meta.env.VITE_LOCAL_API_SECRET }
+                        : {})
+                },
+                body: JSON.stringify({ provider: selectedProvider })
+            });
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok) {
+                throw new Error(data.error || 'Failed to connect provider');
+            }
+            setStatus('Provider connected. Refresh models to see new entries.');
+        } catch (e) {
+            setError(e.message);
+        } finally {
+            setSaving(false);
+        }
+    };
+
     const hasChanges = useMemo(
         () => selectedModel && selectedModel !== currentModel,
         [selectedModel, currentModel]
@@ -109,6 +145,26 @@ const ModelsTab = () => {
                 >
                     <RefreshCw className="w-4 h-4" />
                     Refresh
+                </button>
+            </div>
+
+            <div className="mb-4 grid grid-cols-1 md:grid-cols-3 gap-2">
+                <select
+                    value={selectedProvider}
+                    onChange={(e) => setSelectedProvider(e.target.value)}
+                    className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                >
+                    {PROVIDERS.map((p) => (
+                        <option key={p.key} value={p.key}>{p.label}</option>
+                    ))}
+                </select>
+                <button
+                    type="button"
+                    onClick={handleConnectProvider}
+                    disabled={saving}
+                    className="px-4 py-2 bg-slate-900 text-white rounded-lg text-sm"
+                >
+                    Connect Provider
                 </button>
             </div>
 

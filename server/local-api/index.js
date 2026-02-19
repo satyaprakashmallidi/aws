@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import cors from 'cors';
+import { execFile } from 'child_process';
 
 const app = express();
 
@@ -19,6 +20,15 @@ const SOUL_PATHS = [
 
 const GATEWAY_URL = process.env.OPENCLAW_GATEWAY_URL || 'http://127.0.0.1:18789';
 const GATEWAY_TOKEN = process.env.OPENCLAW_GATEWAY_TOKEN;
+const LOCAL_API_SECRET = process.env.LOCAL_API_SECRET || '';
+
+const ALLOWED_PROVIDERS = new Set([
+    'google-antigravity',
+    'openai',
+    'azure',
+    'anthropic',
+    'gemini'
+]);
 
 app.use(cors());
 app.use(express.json({ limit: '2mb' }));
@@ -142,6 +152,28 @@ app.get('/api/models', (req, res) => {
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
+});
+
+app.post('/api/providers/connect', (req, res) => {
+    if (!LOCAL_API_SECRET) {
+        return res.status(500).json({ error: 'LOCAL_API_SECRET not set' });
+    }
+    const provided = req.headers['x-api-secret'];
+    if (!provided || provided !== LOCAL_API_SECRET) {
+        return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    const { provider } = req.body || {};
+    if (!provider || !ALLOWED_PROVIDERS.has(provider)) {
+        return res.status(400).json({ error: 'Invalid provider' });
+    }
+
+    execFile('openclaw', ['auth', 'add', '--provider', provider], { timeout: 120000 }, (err, stdout, stderr) => {
+        if (err) {
+            return res.status(500).json({ error: err.message, stderr });
+        }
+        return res.json({ ok: true, stdout });
+    });
 });
 
 app.post('/api/model', (req, res) => {
