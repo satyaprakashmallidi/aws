@@ -84,10 +84,25 @@ async function invokeTool(tool, args = {}) {
 
 app.get('/api/health', async (req, res) => {
     try {
-        if (!GATEWAY_TOKEN) {
-            return res.status(500).json({ status: 'offline', message: 'Missing gateway token' });
+        const baseUrl = GATEWAY_URL.replace(/\/$/, '');
+        // Fast path: root HTML should respond quickly if gateway is up.
+        try {
+            const rootRes = await fetch(`${baseUrl}/`, {
+                method: 'GET',
+                signal: AbortSignal.timeout(2000)
+            });
+            if (rootRes.ok) {
+                return res.json({ status: 'online', ts: new Date().toISOString() });
+            }
+        } catch {
+            // Fall through to deeper check
         }
-        const response = await fetch(`${GATEWAY_URL.replace(/\/$/, '')}/v1/chat/completions`, {
+
+        if (!GATEWAY_TOKEN) {
+            return res.status(200).json({ status: 'offline', message: 'Missing gateway token' });
+        }
+
+        const response = await fetch(`${baseUrl}/v1/chat/completions`, {
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${GATEWAY_TOKEN}`,
@@ -98,7 +113,7 @@ app.get('/api/health', async (req, res) => {
                 messages: [{ role: 'user', content: 'ping' }],
                 max_tokens: 1
             }),
-            signal: AbortSignal.timeout(4000)
+            signal: AbortSignal.timeout(10000)
         });
 
         if (!response.ok) {
