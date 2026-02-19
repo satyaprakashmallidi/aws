@@ -2,7 +2,7 @@
  * API client for backend endpoints
  */
 
-const API_BASE = import.meta.env.VITE_API_BASE || '';
+import { apiUrl } from './apiBase';
 
 // Get auth token from localStorage
 function getAuthToken() {
@@ -14,7 +14,7 @@ function getAuthToken() {
 async function apiFetch(endpoint, options = {}) {
     const token = getAuthToken();
 
-    const response = await fetch(`${API_BASE}${endpoint}`, {
+    const response = await fetch(apiUrl(endpoint), {
         ...options,
         headers: {
             'Content-Type': 'application/json',
