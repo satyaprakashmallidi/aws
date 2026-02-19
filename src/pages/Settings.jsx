@@ -252,10 +252,26 @@ const WorkspaceFileTab = () => {
     const [fileName, setFileName] = useState('README.md');
     const [content, setContent] = useState('');
     const [path, setPath] = useState('');
+    const [files, setFiles] = useState([]);
     const [loading, setLoading] = useState(false);
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState('');
     const [status, setStatus] = useState('');
+
+    const loadFiles = async () => {
+        setError('');
+        try {
+            const response = await fetch(apiUrl('/api/workspace-list'));
+            if (!response.ok) {
+                const data = await response.json().catch(() => ({}));
+                throw new Error(data.error || 'Failed to load file list');
+            }
+            const data = await response.json();
+            setFiles(Array.isArray(data.files) ? data.files : []);
+        } catch (e) {
+            setError(e.message);
+        }
+    };
 
     const loadFile = async () => {
         setLoading(true);
@@ -276,6 +292,10 @@ const WorkspaceFileTab = () => {
             setLoading(false);
         }
     };
+
+    useEffect(() => {
+        loadFiles();
+    }, []);
 
     const handleSave = async () => {
         setSaving(true);
@@ -313,21 +333,24 @@ const WorkspaceFileTab = () => {
                 </button>
             </div>
 
-            <div className="flex gap-2 mb-3">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mb-3">
+                <select
+                    value={fileName}
+                    onChange={(e) => setFileName(e.target.value)}
+                    className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                >
+                    <option value="">Select a file...</option>
+                    {files.map((f) => (
+                        <option key={f} value={f}>{f}</option>
+                    ))}
+                </select>
                 <input
                     type="text"
                     value={fileName}
                     onChange={(e) => setFileName(e.target.value)}
-                    className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm"
-                    placeholder="e.g. README.md or notes/todo.md"
+                    className="border border-gray-300 rounded-lg px-3 py-2 text-sm md:col-span-2"
+                    placeholder="or type a path (e.g. README.md or notes/todo.md)"
                 />
-                <button
-                    onClick={loadFile}
-                    className="px-3 py-2 bg-gray-100 rounded-lg text-sm"
-                    disabled={!fileName}
-                >
-                    Open
-                </button>
             </div>
 
             {path && (
