@@ -5,6 +5,7 @@ import Layout from './components/Layout';
 import Home from './pages/Home';
 import Chat from './pages/Chat';
 import Broadcast from './pages/Broadcast';
+import Settings from './pages/Settings';
 import Landing from './pages/Landing';
 import './index.css';
 
@@ -42,6 +43,7 @@ function App() {
                     <Route index element={<Home />} />
                     <Route path="chat" element={<Chat />} />
                     <Route path="broadcast" element={<Broadcast />} />
+                    <Route path="settings" element={<Settings />} />
                 </Route>
 
                 {/* Catch all - redirect to landing */}

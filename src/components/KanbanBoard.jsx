@@ -19,7 +19,7 @@ const KanbanBoard = () => {
 
     const fetchTasks = async () => {
         try {
-            const response = await fetch(`/api/cron?includeDisabled=true&t=${Date.now()}`);
+            const response = await fetch(`/api/tasks?t=${Date.now()}`);
             if (response.ok) {
                 const data = await response.json();
                 setTasks(data.jobs || []);
@@ -31,12 +31,42 @@ const KanbanBoard = () => {
         }
     };
 
+    const getTaskStatus = (task) => {
+        return task?.metadata?.status || task?.status || '';
+    };
+
     const getColumnTasks = (columnId) => {
-        // For now, map cron jobs to columns based on logic
-        // Real implementation would track status in metadata
-        if (columnId === 'inbox') return tasks.filter(t => !t.enabled);
-        if (columnId === 'active') return tasks.filter(t => t.enabled);
+        const byStatus = (status) => tasks.filter(t => getTaskStatus(t) === status);
+
+        if (columnId === 'done') return byStatus('completed');
+        if (columnId === 'review') return byStatus('review');
+        if (columnId === 'active') return byStatus('picked_up').concat(tasks.filter(t => t.enabled && !getTaskStatus(t)));
+        if (columnId === 'assigned') return byStatus('assigned');
+        if (columnId === 'inbox') return tasks.filter(t => !t.enabled && !getTaskStatus(t));
         return [];
+    };
+
+    const handlePickup = async (taskId) => {
+        try {
+            await fetch(`/api/tasks/${encodeURIComponent(taskId)}/pickup`, { method: 'POST' });
+            fetchTasks();
+        } catch (error) {
+            console.error('Failed to pickup task:', error);
+        }
+    };
+
+    const handleComplete = async (taskId) => {
+        const result = prompt('Result (optional):') || '';
+        try {
+            await fetch(`/api/tasks/${encodeURIComponent(taskId)}/complete`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ result })
+            });
+            fetchTasks();
+        } catch (error) {
+            console.error('Failed to complete task:', error);
+        }
     };
 
     if (loading) {
@@ -103,7 +133,7 @@ const KanbanBoard = () => {
                                                 {task.payload?.message || 'No description'}
                                             </p>
 
-                                            <div className="flex items-center gap-2">
+                                            <div className="flex items-center gap-2 flex-wrap">
                                                 <span className="bg-blue-50 text-blue-700 text-[10px] px-1.5 py-0.5 rounded border border-blue-100">
                                                     {task.schedule?.expr || 'Manual'}
                                                 </span>
@@ -112,6 +142,26 @@ const KanbanBoard = () => {
                                                         {task.sessionTarget}
                                                     </span>
                                                 )}
+                                                {getTaskStatus(task) && (
+                                                    <span className="bg-gray-100 text-gray-700 text-[10px] px-1.5 py-0.5 rounded border border-gray-200">
+                                                        {getTaskStatus(task)}
+                                                    </span>
+                                                )}
+                                            </div>
+
+                                            <div className="mt-3 flex gap-2">
+                                                <button
+                                                    onClick={() => handlePickup(task.id)}
+                                                    className="text-xs px-2 py-1 bg-gray-100 rounded hover:bg-gray-200"
+                                                >
+                                                    Pickup
+                                                </button>
+                                                <button
+                                                    onClick={() => handleComplete(task.id)}
+                                                    className="text-xs px-2 py-1 bg-green-100 text-green-700 rounded hover:bg-green-200"
+                                                >
+                                                    Complete
+                                                </button>
                                             </div>
                                         </div>
                                     ))}
