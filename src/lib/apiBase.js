@@ -1,4 +1,8 @@
-const API_BASE = import.meta.env.VITE_API_BASE || '';
+const API_BASE =
+    import.meta.env.VITE_API_BASE
+    || (typeof window !== 'undefined' && window.__API_BASE__)
+    || (import.meta.env.MODE === 'production' ? 'https://api.magicteams.ai' : '')
+    || '';
 
 export function apiUrl(path) {
     if (!path) return path;
