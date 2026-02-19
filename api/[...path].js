@@ -580,6 +580,44 @@ export default async function handler(req, res) {
                 supabaseAnonSet: Boolean(process.env.VITE_SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY)
             });
         }
+        if (id === 'health') {
+            const gatewayUrl = process.env.OPENCLAW_GATEWAY_URL;
+            const gatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN;
+            if (!gatewayUrl || !gatewayToken) {
+                return sendJson(res, 400, { error: 'OPENCLAW_GATEWAY_URL or OPENCLAW_GATEWAY_TOKEN not set' });
+            }
+            const url = `${gatewayUrl.replace(/\/$/, '')}/v1/chat/completions`;
+            try {
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${gatewayToken}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        model: 'health-check',
+                        messages: [{ role: 'user', content: 'ping' }],
+                        max_tokens: 1
+                    }),
+                    signal: AbortSignal.timeout(8000)
+                });
+
+                const text = await response.text();
+                return sendJson(res, 200, {
+                    ok: response.ok,
+                    status: response.status,
+                    statusText: response.statusText,
+                    url,
+                    bodySnippet: text.slice(0, 500)
+                });
+            } catch (error) {
+                return sendJson(res, 200, {
+                    ok: false,
+                    url,
+                    error: error.message
+                });
+            }
+        }
         try {
             const envCheck = {
                 nodeVersion: process.version,
