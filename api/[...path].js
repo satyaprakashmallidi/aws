@@ -65,7 +65,14 @@ function normalizeWorkspacePath(name) {
 }
 
 export default async function handler(req, res) {
-    const pathParts = toArray(req.query.path);
+    let pathParts = toArray(req.query.path);
+    if (pathParts.length === 0 && req.url) {
+        const urlPath = req.url.split('?')[0] || '';
+        const trimmed = urlPath.replace(/^\/api\/?/, '');
+        if (trimmed) {
+            pathParts = trimmed.split('/').filter(Boolean);
+        }
+    }
     const [resource, id, action] = pathParts;
 
     // /api/health
