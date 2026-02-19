@@ -336,7 +336,11 @@ const WorkspaceFileTab = () => {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mb-3">
                 <select
                     value={fileName}
-                    onChange={(e) => setFileName(e.target.value)}
+                    onChange={(e) => {
+                        const next = e.target.value;
+                        setFileName(next);
+                        if (next) loadFile();
+                    }}
                     className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
                 >
                     <option value="">Select a file...</option>
