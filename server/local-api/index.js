@@ -12,7 +12,9 @@ const OPENCLAW_CONFIG_PATH = process.env.OPENCLAW_CONFIG_PATH || path.join(OPENC
 const WORKSPACE_DIR = process.env.OPENCLAW_WORKSPACE || path.join(OPENCLAW_DIR, 'workspace');
 const SOUL_PATHS = [
     path.join(OPENCLAW_DIR, 'memory', 'SOUL.md'),
-    path.join(OPENCLAW_DIR, 'SOUL.md')
+    path.join(OPENCLAW_DIR, 'SOUL.md'),
+    path.join(WORKSPACE_DIR, 'SOUL.md'),
+    path.join(WORKSPACE_DIR, 'memory', 'SOUL.md')
 ];
 
 const GATEWAY_URL = process.env.OPENCLAW_GATEWAY_URL || 'http://127.0.0.1:18789';
@@ -191,7 +193,7 @@ app.get('/api/workspace-file', (req, res) => {
         const content = fs.readFileSync(filePath, 'utf8');
         res.json({ path: filePath, content });
     } catch (error) {
-        res.status(500).json({ error: error.message });
+        res.status(404).json({ error: error.message });
     }
 });
 
@@ -250,7 +252,19 @@ app.get('/api/agents', async (req, res) => {
         const response = await invokeTool('agents_list', {});
         const details = response?.result?.details || {};
         const agents = details.agents || response.agents || [];
-        res.json({ agents, requester: details.requester || 'main', allowAny: details.allowAny || false });
+        const config = readJson(OPENCLAW_CONFIG_PATH);
+        const identity = config.identity || { name: 'OpenClaw', emoji: '🦞' };
+        const description = config.agents?.defaults?.description || '';
+        const model = config.agents?.defaults?.model?.primary || '';
+
+        const enriched = agents.map(agent => ({
+            ...agent,
+            identity,
+            description,
+            model
+        }));
+
+        res.json({ agents: enriched, requester: details.requester || 'main', allowAny: details.allowAny || false });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
