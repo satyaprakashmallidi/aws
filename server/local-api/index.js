@@ -168,7 +168,11 @@ app.post('/api/providers/connect', (req, res) => {
         return res.status(400).json({ error: 'Invalid provider' });
     }
 
-    execFile('openclaw', ['auth', 'add', '--provider', provider], { timeout: 120000 }, (err, stdout, stderr) => {
+    execFile(
+        'openclaw',
+        ['models', 'auth', 'login', '--provider', provider],
+        { timeout: 180000 },
+        (err, stdout, stderr) => {
         if (err) {
             return res.status(500).json({ error: err.message, stderr });
         }
