@@ -160,6 +160,26 @@ app.post('/api/model', (req, res) => {
     }
 });
 
+app.get('/api/openclaw-config', (req, res) => {
+    try {
+        const content = fs.readFileSync(OPENCLAW_CONFIG_PATH, 'utf8');
+        res.json({ path: OPENCLAW_CONFIG_PATH, content });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.put('/api/openclaw-config', (req, res) => {
+    const { content } = req.body || {};
+    if (typeof content !== 'string') return res.status(400).json({ error: 'Content is required' });
+    try {
+        fs.writeFileSync(OPENCLAW_CONFIG_PATH, content);
+        res.json({ ok: true, path: OPENCLAW_CONFIG_PATH });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
 app.get('/api/soul', (req, res) => {
     try {
         for (const filePath of SOUL_PATHS) {

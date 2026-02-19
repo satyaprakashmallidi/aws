@@ -5,7 +5,8 @@ import { Save, RefreshCw } from 'lucide-react';
 const TABS = [
     { id: 'models', label: 'Models' },
     { id: 'soul', label: 'SOUL.md' },
-    { id: 'workspace', label: 'Workspace File' }
+    { id: 'workspace', label: 'Workspace File' },
+    { id: 'openclaw', label: 'openclaw.json' }
 ];
 
 const Settings = () => {
@@ -33,6 +34,7 @@ const Settings = () => {
             {activeTab === 'models' && <ModelsTab />}
             {activeTab === 'soul' && <SoulTab />}
             {activeTab === 'workspace' && <WorkspaceFileTab />}
+            {activeTab === 'openclaw' && <OpenClawConfigTab />}
         </div>
     );
 };
@@ -379,6 +381,103 @@ const WorkspaceFileTab = () => {
                 <button
                     onClick={handleSave}
                     disabled={saving || !fileName}
+                    className="px-4 py-2 bg-blue-600 text-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                >
+                    <Save className="w-4 h-4" />
+                    {saving ? 'Saving...' : 'Save'}
+                </button>
+            </div>
+        </div>
+    );
+};
+
+const OpenClawConfigTab = () => {
+    const [content, setContent] = useState('');
+    const [path, setPath] = useState('');
+    const [loading, setLoading] = useState(true);
+    const [saving, setSaving] = useState(false);
+    const [error, setError] = useState('');
+    const [status, setStatus] = useState('');
+
+    const loadConfig = async () => {
+        setLoading(true);
+        setError('');
+        setStatus('');
+        try {
+            const response = await fetch(apiUrl('/api/openclaw-config'));
+            if (!response.ok) {
+                const data = await response.json().catch(() => ({}));
+                throw new Error(data.error || 'Failed to load config');
+            }
+            const data = await response.json();
+            setContent(data.content || '');
+            setPath(data.path || '');
+        } catch (e) {
+            setError(e.message);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        loadConfig();
+    }, []);
+
+    const handleSave = async () => {
+        setSaving(true);
+        setError('');
+        setStatus('');
+        try {
+            const response = await fetch(apiUrl('/api/openclaw-config'), {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ content })
+            });
+            if (!response.ok) {
+                const data = await response.json().catch(() => ({}));
+                throw new Error(data.error || 'Failed to save config');
+            }
+            setStatus('Saved');
+        } catch (e) {
+            setError(e.message);
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    return (
+        <div>
+            <div className="flex items-center justify-between mb-2">
+                <h3 className="text-lg font-semibold text-gray-800">openclaw.json</h3>
+                <button
+                    onClick={loadConfig}
+                    className="flex items-center gap-2 text-sm text-gray-600 hover:text-gray-800"
+                >
+                    <RefreshCw className="w-4 h-4" />
+                    Refresh
+                </button>
+            </div>
+            {path && (
+                <div className="text-xs text-gray-500 mb-2">Path: <span className="font-mono">{path}</span></div>
+            )}
+            {loading ? (
+                <div className="text-gray-500 text-sm">Loading config...</div>
+            ) : (
+                <textarea
+                    value={content}
+                    onChange={(e) => setContent(e.target.value)}
+                    rows={16}
+                    className="w-full border border-gray-300 rounded-lg p-3 font-mono text-sm"
+                />
+            )}
+
+            {error && <div className="mt-3 text-sm text-red-600">{error}</div>}
+            {status && <div className="mt-3 text-sm text-green-600">{status}</div>}
+
+            <div className="mt-4">
+                <button
+                    onClick={handleSave}
+                    disabled={saving}
                     className="px-4 py-2 bg-blue-600 text-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                 >
                     <Save className="w-4 h-4" />
