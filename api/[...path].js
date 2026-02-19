@@ -571,6 +571,15 @@ export default async function handler(req, res) {
 
     // /api/debug
     if (resource === 'debug') {
+        if (id === 'env') {
+            return sendJson(res, 200, {
+                nodeVersion: process.version,
+                gatewayUrl: process.env.OPENCLAW_GATEWAY_URL || 'NOT SET',
+                gatewayTokenSet: Boolean(process.env.OPENCLAW_GATEWAY_TOKEN),
+                supabaseUrlSet: Boolean(process.env.VITE_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL),
+                supabaseAnonSet: Boolean(process.env.VITE_SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY)
+            });
+        }
         try {
             const envCheck = {
                 nodeVersion: process.version,
