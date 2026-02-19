@@ -313,25 +313,18 @@ export default async function handler(req, res) {
 
     // /api/models
     if (resource === 'models') {
-        if (req.method !== 'GET') return sendJson(res, 405, { error: 'Method not allowed' });
-        try {
-            const models = await listModels();
-            return sendJson(res, 200, { models, currentModel: '' });
-        } catch (error) {
-            return sendJson(res, 500, { error: error.message });
-        }
+        return sendJson(res, 410, { error: 'This endpoint has moved. Use the VPS API base.' });
     }
 
     // /api/model
     if (resource === 'model') {
-        if (req.method !== 'POST') return sendJson(res, 405, { error: 'Method not allowed' });
-        return sendJson(res, 501, {
-            error: 'Model updates are not available (gateway config tool not exposed).'
-        });
+        return sendJson(res, 410, { error: 'This endpoint has moved. Use the VPS API base.' });
     }
 
     // /api/soul
     if (resource === 'soul') {
+        return sendJson(res, 410, { error: 'This endpoint has moved. Use the VPS API base.' });
+    }
         if (req.method === 'GET') {
             try {
                 const { filePath, content } = await readFirstExisting(SOUL_PATH_CANDIDATES);
@@ -364,6 +357,8 @@ export default async function handler(req, res) {
 
     // /api/workspace-file
     if (resource === 'workspace-file') {
+        return sendJson(res, 410, { error: 'This endpoint has moved. Use the VPS API base.' });
+    }
         const { name } = req.query || {};
         const filePath = normalizeWorkspacePath(name);
         if (!filePath) return sendJson(res, 400, { error: 'Invalid file name' });

@@ -11,15 +11,15 @@ const Header = () => {
 
     useEffect(() => {
         fetchStatus();
-        const interval = setInterval(fetchStatus, 30000); // Update every 30s
+        const interval = setInterval(fetchStatus, 5000); // Update every 5s
         return () => clearInterval(interval);
     }, []);
 
     const fetchStatus = async () => {
         try {
             // Get gateway health
-            await health.check();
-            setGatewayStatus('online');
+            const healthData = await health.check();
+            setGatewayStatus(healthData?.status === 'online' ? 'online' : 'offline');
 
             // Get active agent count
             const response = await fetch(apiUrl(`/api/agents?action=status&t=${Date.now()}`));

@@ -82,8 +82,38 @@ async function invokeTool(tool, args = {}) {
     return response.json();
 }
 
-app.get('/api/health', (req, res) => {
-    res.json({ ok: true, ts: new Date().toISOString() });
+app.get('/api/health', async (req, res) => {
+    try {
+        if (!GATEWAY_TOKEN) {
+            return res.status(500).json({ status: 'offline', message: 'Missing gateway token' });
+        }
+        const response = await fetch(`${GATEWAY_URL.replace(/\/$/, '')}/v1/chat/completions`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${GATEWAY_TOKEN}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                model: 'health-check',
+                messages: [{ role: 'user', content: 'ping' }],
+                max_tokens: 1
+            }),
+            signal: AbortSignal.timeout(4000)
+        });
+
+        if (!response.ok) {
+            const text = await response.text();
+            return res.status(200).json({
+                status: 'offline',
+                message: `Gateway error ${response.status}`,
+                details: text.slice(0, 200)
+            });
+        }
+
+        return res.json({ status: 'online', ts: new Date().toISOString() });
+    } catch (error) {
+        return res.status(200).json({ status: 'offline', message: error.message });
+    }
 });
 
 app.get('/api/models', (req, res) => {
@@ -166,19 +196,79 @@ app.put('/api/workspace-file', (req, res) => {
 
 app.get('/api/agents', async (req, res) => {
     try {
-        const { action } = req.query;
+        const { action, id } = req.query;
         if (action === 'status') {
             const response = await invokeTool('sessions_list', { activeMinutes: 60 });
-            return res.json(response);
+            const details = response?.result?.details || {};
+            const sessions = details.sessions || response.sessions || [];
+            const activeAgents = new Set();
+            sessions.forEach(session => {
+                const key = session?.key || session?.sessionKey || '';
+                const parts = key.split(':');
+                if (parts[0] === 'agent' && parts[1]) activeAgents.add(parts[1]);
+            });
+            return res.json({
+                totalAgents: sessions.length,
+                activeAgents: Array.from(activeAgents),
+                activeCount: activeAgents.size,
+                sessions
+            });
         }
         if (action === 'models') {
             const config = readJson(OPENCLAW_CONFIG_PATH);
             return res.json(listModelsFromConfig(config));
         }
+        if (id) {
+            const config = readJson(OPENCLAW_CONFIG_PATH);
+            const identity = config.identity || { name: 'OpenClaw', emoji: '🦞' };
+            return res.json({
+                id,
+                description: config.agents?.defaults?.description || '',
+                model: config.agents?.defaults?.model?.primary || '',
+                identity,
+                workspace: config.agents?.defaults?.workspace || WORKSPACE_DIR,
+                availableModels: listModelsFromConfig(config).map(m => m.key),
+                providers: Object.keys(config.models?.providers || {})
+            });
+        }
+
         const response = await invokeTool('agents_list', {});
-        res.json(response);
+        const details = response?.result?.details || {};
+        const agents = details.agents || response.agents || [];
+        res.json({ agents, requester: details.requester || 'main', allowAny: details.allowAny || false });
     } catch (error) {
         res.status(500).json({ error: error.message });
+    }
+});
+
+app.patch('/api/agents', (req, res) => {
+    const { id } = req.query;
+    if (!id) return res.status(400).json({ error: 'Agent ID required' });
+    try {
+        const updates = req.body || {};
+        const config = readJson(OPENCLAW_CONFIG_PATH);
+        if (!config.agents) config.agents = {};
+        if (!config.agents.defaults) config.agents.defaults = {};
+        if (!config.identity) config.identity = { name: 'OpenClaw', emoji: '🦞' };
+
+        if (updates.description !== undefined) {
+            config.agents.defaults.description = updates.description;
+        }
+        if (updates.model) {
+            if (!config.agents.defaults.model) config.agents.defaults.model = {};
+            config.agents.defaults.model.primary = updates.model;
+        }
+        if (updates.identity?.name !== undefined) {
+            config.identity.name = updates.identity.name;
+        }
+        if (updates.identity?.emoji !== undefined) {
+            config.identity.emoji = updates.identity.emoji;
+        }
+
+        writeJson(OPENCLAW_CONFIG_PATH, config);
+        return res.json({ ok: true });
+    } catch (error) {
+        return res.status(500).json({ error: error.message });
     }
 });
 
@@ -228,7 +318,12 @@ app.get('/api/chat', async (req, res) => {
             limit: limit ? parseInt(limit, 10) : 50,
             includeTools: includeTools === 'true'
         });
-        res.json(response);
+        const details = response?.result?.details || {};
+        res.json({
+            sessionKey,
+            messages: details.messages || response.messages || [],
+            total: details.total || response.total || 0
+        });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
@@ -237,7 +332,9 @@ app.get('/api/chat', async (req, res) => {
 app.get('/api/tasks', async (req, res) => {
     try {
         const response = await invokeTool('cron', { action: 'list', includeDisabled: true });
-        res.json(response);
+        const details = response?.result?.details || {};
+        const jobs = details.jobs || response.jobs || [];
+        res.json({ jobs });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
