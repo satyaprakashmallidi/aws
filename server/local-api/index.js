@@ -211,6 +211,33 @@ app.put('/api/workspace-file', (req, res) => {
     }
 });
 
+app.get('/api/workspace-list', (req, res) => {
+    try {
+        const entries = [];
+        const root = WORKSPACE_DIR;
+        const stack = ['.'];
+        while (stack.length) {
+            const rel = stack.pop();
+            const abs = path.join(root, rel);
+            const stat = fs.statSync(abs);
+            if (stat.isDirectory()) {
+                const items = fs.readdirSync(abs);
+                for (const item of items) {
+                    if (item === '.git' || item === 'node_modules') continue;
+                    const nextRel = path.join(rel, item);
+                    stack.push(nextRel);
+                }
+            } else if (stat.isFile()) {
+                entries.push(rel.replace(/^[.][\\/]/, '').replace(/\\/g, '/'));
+            }
+        }
+        entries.sort();
+        res.json({ files: entries });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
 app.get('/api/agents', async (req, res) => {
     try {
         const { action, id } = req.query;
