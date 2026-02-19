@@ -1,12 +1,14 @@
 import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { SignedIn, SignedOut, RedirectToSignIn, SignIn, SignUp } from "@clerk/clerk-react";
+import { SignedIn, SignedOut, RedirectToSignIn } from "@clerk/clerk-react";
 import Layout from './components/Layout';
 import Home from './pages/Home';
 import Chat from './pages/Chat';
 import Broadcast from './pages/Broadcast';
 import Settings from './pages/Settings';
 import Landing from './pages/Landing';
+import SignInPage from './pages/SignIn';
+import SignUpPage from './pages/SignUp';
 import './index.css';
 
 function App() {
@@ -19,11 +21,11 @@ function App() {
                 {/* Clerk Auth Routes */}
                 <Route
                     path="/sign-in/*"
-                    element={<SignIn routing="path" path="/sign-in" signUpUrl="/sign-up" afterSignInUrl="/app" />}
+                    element={<SignInPage />}
                 />
                 <Route
                     path="/sign-up/*"
-                    element={<SignUp routing="path" path="/sign-up" signInUrl="/sign-in" afterSignUpUrl="/app" />}
+                    element={<SignUpPage />}
                 />
 
                 {/* Protected Routes */}
