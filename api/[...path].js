@@ -1,5 +1,5 @@
 import { Readable } from 'stream';
-import { listAgents, listModels, sendChatMessage, sendChatMessageStream, invokeTool, getHealth } from './lib/openclaw.js';
+import { listAgents, listModels, sendChatMessage, sendChatMessageStream, invokeTool, getHealth, getGatewayConfig, readFile, writeFile } from './lib/openclaw.js';
 import { getAgentConfig, updateAgentConfig, getAgentStatus } from './lib/openclaw-agent.js';
 import { getChatHistory, listSessions } from './lib/openclaw-chat.js';
 import { listCronJobs, addCronJob, updateCronJob, deleteCronJob, runCronJob } from './lib/openclaw-cron.js';
@@ -21,32 +21,11 @@ function sendJson(res, status, body) {
     res.status(status).json(body);
 }
 
-async function readConfig() {
-    const response = await invokeTool({
-        tool: 'read',
-        args: { file_path: OPENCLAW_CONFIG_PATH }
-    });
-    const content = response?.content || response?.data || '{}';
-    return JSON.parse(content || '{}');
-}
-
-async function writeConfig(config) {
-    const content = JSON.stringify(config, null, 2);
-    await invokeTool({
-        tool: 'write',
-        args: { file_path: OPENCLAW_CONFIG_PATH, content }
-    });
-}
-
 async function readFirstExisting(paths) {
     let lastError = null;
     for (const filePath of paths) {
         try {
-            const response = await invokeTool({
-                tool: 'read',
-                args: { file_path: filePath }
-            });
-            const content = response?.content || response?.data || '';
+            const content = await readFile(filePath);
             return { filePath, content };
         } catch (err) {
             lastError = err;
@@ -338,7 +317,7 @@ export default async function handler(req, res) {
         try {
             const [models, config] = await Promise.all([
                 listModels(),
-                readConfig().catch(() => ({}))
+                getGatewayConfig().catch(() => ({}))
             ]);
             const currentModel = config?.agents?.defaults?.model?.primary || '';
             return sendJson(res, 200, { models, currentModel });
@@ -353,12 +332,13 @@ export default async function handler(req, res) {
         const { model } = req.body || {};
         if (!model) return sendJson(res, 400, { error: 'Model is required' });
         try {
-            const config = await readConfig();
+        const config = await getGatewayConfig();
             if (!config.agents) config.agents = {};
             if (!config.agents.defaults) config.agents.defaults = {};
             if (!config.agents.defaults.model) config.agents.defaults.model = {};
             config.agents.defaults.model.primary = model;
-            await writeConfig(config);
+            const content = JSON.stringify(config, null, 2);
+            await writeFile(OPENCLAW_CONFIG_PATH, content);
             return sendJson(res, 200, { ok: true, model });
         } catch (error) {
             return sendJson(res, 500, { error: error.message });
@@ -387,10 +367,7 @@ export default async function handler(req, res) {
                 } catch {
                     // Ignore and write to default.
                 }
-                await invokeTool({
-                    tool: 'write',
-                    args: { file_path: filePath, content }
-                });
+                await writeFile(filePath, content);
                 return sendJson(res, 200, { ok: true, path: filePath });
             } catch (error) {
                 return sendJson(res, 500, { error: error.message });
@@ -408,14 +385,10 @@ export default async function handler(req, res) {
 
         if (req.method === 'GET') {
             try {
-                const response = await invokeTool({
-                    tool: 'read',
-                    args: { file_path: filePath }
-                });
-                const content = response?.content || response?.data || '';
-                return sendJson(res, 200, { path: filePath, content });
-            } catch (error) {
-                return sendJson(res, 500, { error: error.message });
+            const content = await readFile(filePath);
+            return sendJson(res, 200, { path: filePath, content });
+        } catch (error) {
+            return sendJson(res, 500, { error: error.message });
             }
         }
 
@@ -423,13 +396,10 @@ export default async function handler(req, res) {
             const { content } = req.body || {};
             if (typeof content !== 'string') return sendJson(res, 400, { error: 'Content is required' });
             try {
-                await invokeTool({
-                    tool: 'write',
-                    args: { file_path: filePath, content }
-                });
-                return sendJson(res, 200, { ok: true, path: filePath });
-            } catch (error) {
-                return sendJson(res, 500, { error: error.message });
+            await writeFile(filePath, content);
+            return sendJson(res, 200, { ok: true, path: filePath });
+        } catch (error) {
+            return sendJson(res, 500, { error: error.message });
             }
         }
 

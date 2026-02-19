@@ -151,6 +151,101 @@ export async function invokeTool({ tool, args = {}, sessionKey }) {
     }
 }
 
+function extractToolDetails(response) {
+    if (response?.result?.details) return response.result.details;
+    if (response?.details) return response.details;
+    return null;
+}
+
+function extractTextContent(response) {
+    const content = response?.result?.content || response?.content || response?.data;
+    if (Array.isArray(content)) {
+        const textItem = content.find(item => item?.type === 'text' && typeof item.text === 'string');
+        return textItem?.text || '';
+    }
+    if (typeof content === 'string') return content;
+    return '';
+}
+
+function safeJsonParse(raw) {
+    if (!raw || typeof raw !== 'string') return null;
+    try {
+        return JSON.parse(raw);
+    } catch {
+        return null;
+    }
+}
+
+export async function getGatewayConfig() {
+    try {
+        const response = await invokeTool({
+            tool: 'gateway',
+            args: { action: 'config.get' }
+        });
+
+        const details = extractToolDetails(response);
+        const parsed = details?.parsed || details?.config || null;
+        if (parsed) return parsed;
+
+        const raw = details?.raw || extractTextContent(response);
+        const parsedRaw = safeJsonParse(raw);
+        if (parsedRaw) return parsedRaw;
+
+        throw new Error('Gateway config not available');
+    } catch (error) {
+        console.error('[OpenClaw:Error] getGatewayConfig failed:', error);
+        throw error;
+    }
+}
+
+export async function readFile(filePath) {
+    const attempts = [
+        { tool: 'read', args: { file_path: filePath } },
+        { tool: 'fs', args: { action: 'read', path: filePath } },
+        { tool: 'fs', args: { action: 'read', file_path: filePath } },
+        { tool: 'fs.read', args: { path: filePath } },
+        { tool: 'file.read', args: { path: filePath } },
+        { tool: 'core.read', args: { path: filePath } }
+    ];
+
+    let lastError;
+    for (const attempt of attempts) {
+        try {
+            const response = await invokeTool(attempt);
+            const details = extractToolDetails(response);
+            const content = details?.content || details?.data || response?.content || response?.data || extractTextContent(response);
+            if (typeof content === 'string') {
+                return content;
+            }
+        } catch (error) {
+            lastError = error;
+        }
+    }
+    throw lastError || new Error('File read failed');
+}
+
+export async function writeFile(filePath, content) {
+    const attempts = [
+        { tool: 'write', args: { file_path: filePath, content } },
+        { tool: 'fs', args: { action: 'write', path: filePath, content } },
+        { tool: 'fs', args: { action: 'write', file_path: filePath, content } },
+        { tool: 'fs.write', args: { path: filePath, content } },
+        { tool: 'file.write', args: { path: filePath, content } },
+        { tool: 'core.write', args: { path: filePath, content } }
+    ];
+
+    let lastError;
+    for (const attempt of attempts) {
+        try {
+            const response = await invokeTool(attempt);
+            return response;
+        } catch (error) {
+            lastError = error;
+        }
+    }
+    throw lastError || new Error('File write failed');
+}
+
 /**
  * List agents
  */
@@ -202,21 +297,14 @@ export async function listModels() {
         if (response?.models) {
             return response.models;
         }
-
-        // Fallback: If models_list not available, try reading config directly
-        console.warn('models_list tool didn\'t return expected format, trying to read config...');
-
-        const configPath = '~/.openclaw/openclaw.json';
-        const readResponse = await invokeTool({
-            tool: 'read',
-            args: { file_path: configPath }
-        });
-
-        const fileContent = readResponse?.content || readResponse?.data;
-        if (fileContent) {
-            const config = JSON.parse(fileContent);
-            return parseModelsFromConfig(config);
+        if (response?.result?.details?.models) {
+            return response.result.details.models;
         }
+
+        // Fallback: If models_list not available, try gateway config
+        console.warn('models_list tool didn\'t return expected format, trying gateway config...');
+        const config = await getGatewayConfig();
+        return parseModelsFromConfig(config);
 
         throw new Error('Could not list models via models_list or read config options');
 

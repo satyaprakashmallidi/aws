@@ -1,4 +1,4 @@
-import { invokeTool } from './openclaw.js';
+import { invokeTool, getGatewayConfig, writeFile } from './openclaw.js';
 
 /**
  * Get full agent configuration
@@ -6,18 +6,7 @@ import { invokeTool } from './openclaw.js';
  */
 export async function getAgentConfig(agentId) {
     try {
-        const configPath = '~/.openclaw/openclaw.json';
-        // Use read tool instead of exec
-        const response = await invokeTool({
-            tool: 'read',
-            args: {
-                file_path: configPath
-            }
-        });
-
-        // Extract content from read response
-        const content = response?.content || response?.data || '';
-        const config = JSON.parse(content || '{}');
+        const config = await getGatewayConfig();
 
         // Extract agent info from actual config structure
         const primary = config.agents?.defaults?.model?.primary || '';
@@ -73,16 +62,7 @@ export async function getAgentConfig(agentId) {
 export async function updateAgentConfig(agentId, updates) {
     const configPath = '~/.openclaw/openclaw.json';
 
-    // Read current config using read tool
-    const readResponse = await invokeTool({
-        tool: 'read',
-        args: {
-            file_path: configPath
-        }
-    });
-
-    const content = readResponse?.content || readResponse?.data || '{}';
-    const config = JSON.parse(content);
+    const config = await getGatewayConfig();
 
     // Apply updates to agents.defaults
     if (!config.agents) config.agents = {};
@@ -97,13 +77,7 @@ export async function updateAgentConfig(agentId, updates) {
 
     // Write back using write tool
     const configStr = JSON.stringify(config, null, 2);
-    await invokeTool({
-        tool: 'write',
-        args: {
-            file_path: configPath,
-            content: configStr
-        }
-    });
+    await writeFile(configPath, configStr);
 
     return {
         id: agentId,
@@ -123,7 +97,7 @@ export async function getAgentStatus() {
         });
 
         // Count active agents
-        const sessions = response.sessions || [];
+        const sessions = response?.result?.details?.sessions || response.sessions || [];
         const activeAgents = new Set();
 
         sessions.forEach(session => {

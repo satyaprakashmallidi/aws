@@ -18,10 +18,11 @@ export async function getChatHistory(sessionKey, options = {}) {
             }
         });
 
+        const details = response?.result?.details || {};
         return {
             sessionKey,
-            messages: response.messages || [],
-            total: response.total || 0
+            messages: details.messages || response.messages || [],
+            total: details.total || response.total || 0
         };
     } catch (error) {
         console.error(`Failed to get chat history for ${sessionKey}:`, error);
@@ -52,9 +53,10 @@ export async function listSessions(options = {}) {
             }
         });
 
+        const details = response?.result?.details || {};
         return {
-            sessions: response.sessions || [],
-            total: response.total || 0
+            sessions: details.sessions || response.sessions || [],
+            total: details.count || response.total || 0
         };
     } catch (error) {
         console.error('Failed to list sessions:', error);
