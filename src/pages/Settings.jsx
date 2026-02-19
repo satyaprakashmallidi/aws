@@ -251,7 +251,7 @@ const SoulTab = () => {
 };
 
 const WorkspaceFileTab = () => {
-    const [fileName, setFileName] = useState('README.md');
+    const [fileName, setFileName] = useState('');
     const [content, setContent] = useState('');
     const [path, setPath] = useState('');
     const [files, setFiles] = useState([]);
@@ -269,18 +269,26 @@ const WorkspaceFileTab = () => {
                 throw new Error(data.error || 'Failed to load file list');
             }
             const data = await response.json();
-            setFiles(Array.isArray(data.files) ? data.files : []);
+            const nextFiles = Array.isArray(data.files) ? data.files : [];
+            setFiles(nextFiles);
+            if (!fileName && nextFiles.length > 0) {
+                const first = nextFiles[0];
+                setFileName(first);
+                loadFile(first);
+            }
         } catch (e) {
             setError(e.message);
         }
     };
 
-    const loadFile = async () => {
+    const loadFile = async (forcedName) => {
         setLoading(true);
         setError('');
         setStatus('');
         try {
-            const response = await fetch(apiUrl(`/api/workspace-file?name=${encodeURIComponent(fileName)}`));
+            const target = forcedName || fileName;
+            if (!target) throw new Error('Select a file first');
+            const response = await fetch(apiUrl(`/api/workspace-file?name=${encodeURIComponent(target)}`));
             if (!response.ok) {
                 const data = await response.json().catch(() => ({}));
                 throw new Error(data.error || 'Failed to load file');
@@ -341,7 +349,7 @@ const WorkspaceFileTab = () => {
                     onChange={(e) => {
                         const next = e.target.value;
                         setFileName(next);
-                        if (next) loadFile();
+                        if (next) loadFile(next);
                     }}
                     className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
                 >
