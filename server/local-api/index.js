@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import cors from 'cors';
-import { execFile } from 'child_process';
+import { execFile, spawn } from 'child_process';
 
 const app = express();
 
@@ -163,21 +163,38 @@ app.post('/api/providers/connect', (req, res) => {
         return res.status(401).json({ error: 'Unauthorized' });
     }
 
-    const { provider } = req.body || {};
+    const { provider, token, expiresIn, profileId } = req.body || {};
     if (!provider || !ALLOWED_PROVIDERS.has(provider)) {
         return res.status(400).json({ error: 'Invalid provider' });
     }
+    if (!token || typeof token !== 'string') {
+        return res.status(400).json({ error: 'Token is required' });
+    }
 
-    execFile(
-        'openclaw',
-        ['models', 'auth', 'login', '--provider', provider],
-        { timeout: 180000 },
-        (err, stdout, stderr) => {
-        if (err) {
-            return res.status(500).json({ error: err.message, stderr });
+    const args = ['models', 'auth', 'paste-token', '--provider', provider];
+    if (expiresIn) args.push('--expires-in', String(expiresIn));
+    if (profileId) args.push('--profile-id', String(profileId));
+
+    const child = spawn('openclaw', args, { stdio: ['pipe', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+
+    child.stdout.on('data', (data) => { stdout += data.toString(); });
+    child.stderr.on('data', (data) => { stderr += data.toString(); });
+
+    child.on('error', (err) => {
+        return res.status(500).json({ error: err.message, stderr });
+    });
+
+    child.on('close', (code) => {
+        if (code !== 0) {
+            return res.status(500).json({ error: `Command failed with code ${code}`, stderr });
         }
         return res.json({ ok: true, stdout });
     });
+
+    child.stdin.write(token);
+    child.stdin.end();
 });
 
 app.post('/api/model', (req, res) => {

@@ -52,6 +52,8 @@ const ModelsTab = () => {
     const [currentModel, setCurrentModel] = useState('');
     const [selectedModel, setSelectedModel] = useState('');
     const [selectedProvider, setSelectedProvider] = useState(PROVIDERS[0].key);
+    const [providerToken, setProviderToken] = useState('');
+    const [tokenExpiry, setTokenExpiry] = useState('');
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState('');
@@ -116,13 +118,18 @@ const ModelsTab = () => {
                         ? { 'x-api-secret': import.meta.env.VITE_LOCAL_API_SECRET }
                         : {})
                 },
-                body: JSON.stringify({ provider: selectedProvider })
+                body: JSON.stringify({
+                    provider: selectedProvider,
+                    token: providerToken,
+                    ...(tokenExpiry ? { expiresIn: tokenExpiry } : {})
+                })
             });
             const data = await response.json().catch(() => ({}));
             if (!response.ok) {
                 throw new Error(data.error || 'Failed to connect provider');
             }
-            setStatus('Provider connected. Refresh models to see new entries.');
+            setStatus('Token saved. Refresh models to see new entries.');
+            setProviderToken('');
         } catch (e) {
             setError(e.message);
         } finally {
@@ -148,7 +155,7 @@ const ModelsTab = () => {
                 </button>
             </div>
 
-            <div className="mb-4 grid grid-cols-1 md:grid-cols-3 gap-2">
+            <div className="mb-4 grid grid-cols-1 md:grid-cols-4 gap-2">
                 <select
                     value={selectedProvider}
                     onChange={(e) => setSelectedProvider(e.target.value)}
@@ -158,13 +165,27 @@ const ModelsTab = () => {
                         <option key={p.key} value={p.key}>{p.label}</option>
                     ))}
                 </select>
+                <input
+                    type="password"
+                    value={providerToken}
+                    onChange={(e) => setProviderToken(e.target.value)}
+                    className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                    placeholder="Provider token"
+                />
+                <input
+                    type="text"
+                    value={tokenExpiry}
+                    onChange={(e) => setTokenExpiry(e.target.value)}
+                    className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                    placeholder="Expires in (e.g. 365d)"
+                />
                 <button
                     type="button"
                     onClick={handleConnectProvider}
-                    disabled={saving}
+                    disabled={saving || !providerToken}
                     className="px-4 py-2 bg-slate-900 text-white rounded-lg text-sm"
                 >
-                    Connect Provider
+                    Save Token
                 </button>
             </div>
 
