@@ -54,6 +54,9 @@ const ModelsTab = () => {
     const [selectedProvider, setSelectedProvider] = useState(PROVIDERS[0].key);
     const [providerToken, setProviderToken] = useState('');
     const [tokenExpiry, setTokenExpiry] = useState('');
+    const [providerList, setProviderList] = useState([]);
+    const [activeProvider, setActiveProvider] = useState('');
+    const [providerJson, setProviderJson] = useState('');
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState('');
@@ -77,8 +80,54 @@ const ModelsTab = () => {
         }
     };
 
+    const loadProviders = async () => {
+        try {
+            const response = await fetch(apiUrl('/api/providers'));
+            if (!response.ok) return;
+            const data = await response.json();
+            const list = Array.isArray(data.providers) ? data.providers : [];
+            setProviderList(list);
+            if (!activeProvider && list.length > 0) {
+                setActiveProvider(list[0]);
+                loadProvider(list[0]);
+            }
+        } catch {
+            // ignore
+        }
+    };
+
+    const loadProvider = async (name) => {
+        try {
+            const response = await fetch(apiUrl(`/api/provider?name=${encodeURIComponent(name)}`));
+            if (!response.ok) return;
+            const data = await response.json();
+            setProviderJson(JSON.stringify(data.provider || {}, null, 2));
+        } catch {
+            // ignore
+        }
+    };
+
+    const saveProvider = async () => {
+        try {
+            const parsed = JSON.parse(providerJson);
+            const response = await fetch(apiUrl(`/api/provider?name=${encodeURIComponent(activeProvider)}`), {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ provider: parsed })
+            });
+            if (!response.ok) {
+                const data = await response.json().catch(() => ({}));
+                throw new Error(data.error || 'Failed to save provider');
+            }
+            setStatus('Provider saved. Refresh models to see updates.');
+        } catch (e) {
+            setError(e.message);
+        }
+    };
+
     useEffect(() => {
         loadModels();
+        loadProviders();
     }, []);
 
     const handleSave = async () => {
@@ -188,6 +237,48 @@ const ModelsTab = () => {
                     Save Token
                 </button>
             </div>
+
+            {providerList.length > 0 && (
+                <div className="mb-6">
+                    <div className="text-sm font-semibold text-gray-700 mb-2">Provider Config (JSON)</div>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mb-2">
+                        <select
+                            value={activeProvider}
+                            onChange={(e) => {
+                                const next = e.target.value;
+                                setActiveProvider(next);
+                                loadProvider(next);
+                            }}
+                            className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                        >
+                            {providerList.map((p) => (
+                                <option key={p} value={p}>{p}</option>
+                            ))}
+                        </select>
+                        <button
+                            type="button"
+                            onClick={() => loadProvider(activeProvider)}
+                            className="px-4 py-2 bg-gray-100 rounded-lg text-sm"
+                        >
+                            Reload
+                        </button>
+                        <button
+                            type="button"
+                            onClick={saveProvider}
+                            className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm"
+                        >
+                            Save Provider
+                        </button>
+                    </div>
+                    <textarea
+                        value={providerJson}
+                        onChange={(e) => setProviderJson(e.target.value)}
+                        rows={10}
+                        className="w-full border border-gray-300 rounded-lg p-3 font-mono text-xs"
+                        placeholder="Provider JSON config..."
+                    />
+                </div>
+            )}
 
             {loading ? (
                 <div className="text-gray-500 text-sm">Loading models...</div>

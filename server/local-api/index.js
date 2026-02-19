@@ -154,6 +154,46 @@ app.get('/api/models', (req, res) => {
     }
 });
 
+app.get('/api/providers', (req, res) => {
+    try {
+        const config = readJson(OPENCLAW_CONFIG_PATH);
+        const providers = Object.keys(config?.models?.providers || {});
+        res.json({ providers });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.get('/api/provider', (req, res) => {
+    const { name } = req.query || {};
+    if (!name) return res.status(400).json({ error: 'Provider name required' });
+    try {
+        const config = readJson(OPENCLAW_CONFIG_PATH);
+        const provider = config?.models?.providers?.[name];
+        if (!provider) return res.status(404).json({ error: 'Provider not found' });
+        res.json({ name, provider });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.put('/api/provider', (req, res) => {
+    const { name } = req.query || {};
+    const { provider } = req.body || {};
+    if (!name) return res.status(400).json({ error: 'Provider name required' });
+    if (provider === undefined) return res.status(400).json({ error: 'Provider payload required' });
+    try {
+        const config = readJson(OPENCLAW_CONFIG_PATH);
+        if (!config.models) config.models = {};
+        if (!config.models.providers) config.models.providers = {};
+        config.models.providers[name] = provider;
+        writeJson(OPENCLAW_CONFIG_PATH, config);
+        res.json({ ok: true });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
 app.post('/api/providers/connect', (req, res) => {
     if (!LOCAL_API_SECRET) {
         return res.status(500).json({ error: 'LOCAL_API_SECRET not set' });
