@@ -76,20 +76,20 @@ const SignUpPage = () => {
     };
 
     return (
-        <div className="min-h-screen bg-slate-950 text-white selection:bg-cyan-500 selection:text-white flex items-center justify-center px-6 py-12">
-            <div className="w-full max-w-md bg-slate-900/60 border border-slate-800 rounded-2xl p-8 shadow-2xl">
+        <div className="min-h-screen bg-slate-50 text-slate-900 selection:bg-blue-200 selection:text-slate-900 flex items-center justify-center px-6 py-12">
+            <div className="w-full max-w-md bg-white border border-slate-200 rounded-2xl p-8 shadow-lg">
                 <div className="flex items-center gap-3 mb-8">
-                    <div className="w-10 h-10 bg-gradient-to-tr from-cyan-500 to-purple-600 rounded-lg flex items-center justify-center">
+                    <div className="w-10 h-10 bg-blue-600 rounded-lg flex items-center justify-center shadow-sm">
                         <Bot className="w-6 h-6 text-white" />
                     </div>
                     <div>
                         <div className="text-lg font-bold">Magic Teams</div>
-                        <div className="text-xs text-slate-400">OpenClaw Control</div>
+                        <div className="text-xs text-slate-500">OpenClaw Control</div>
                     </div>
                 </div>
 
                 <h1 className="text-2xl font-bold mb-2">Create your account</h1>
-                <p className="text-sm text-slate-400 mb-6">
+                <p className="text-sm text-slate-600 mb-6">
                     Spin up your command center in minutes.
                 </p>
 
@@ -99,7 +99,7 @@ const SignUpPage = () => {
                             type="button"
                             onClick={handleGoogle}
                             disabled={!isLoaded || loading}
-                            className="w-full px-4 py-2 bg-white text-slate-900 rounded-lg font-semibold hover:bg-slate-100 transition-colors disabled:opacity-50"
+                            className="w-full px-4 py-2 bg-slate-900 text-white rounded-lg font-semibold hover:bg-slate-800 transition-colors disabled:opacity-50"
                         >
                             Continue with Google
                         </button>
@@ -107,31 +107,31 @@ const SignUpPage = () => {
                         <div className="text-xs text-slate-500 text-center">or</div>
 
                         <div>
-                            <label className="block text-xs font-medium text-slate-400 mb-1">Email</label>
+                            <label className="block text-xs font-medium text-slate-600 mb-1">Email</label>
                             <input
                                 type="email"
                                 value={email}
                                 onChange={(e) => setEmail(e.target.value)}
-                                className="w-full px-4 py-2 bg-slate-950 border border-slate-800 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                                className="w-full px-4 py-2 bg-white border border-slate-200 rounded-lg text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
                                 placeholder="you@company.com"
                                 required
                             />
                         </div>
 
                         <div>
-                            <label className="block text-xs font-medium text-slate-400 mb-1">Password</label>
+                            <label className="block text-xs font-medium text-slate-600 mb-1">Password</label>
                             <input
                                 type="password"
                                 value={password}
                                 onChange={(e) => setPassword(e.target.value)}
-                                className="w-full px-4 py-2 bg-slate-950 border border-slate-800 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-cyan-500"
-                                placeholder="••••••••"
+                                className="w-full px-4 py-2 bg-white border border-slate-200 rounded-lg text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                placeholder="********"
                                 required
                             />
                         </div>
 
                         {error && (
-                            <div className="text-sm text-red-400 bg-red-950/40 border border-red-900 rounded-lg p-3">
+                            <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg p-3">
                                 {error}
                             </div>
                         )}
@@ -139,7 +139,7 @@ const SignUpPage = () => {
                         <button
                             type="submit"
                             disabled={!isLoaded || loading}
-                            className="w-full px-4 py-2 bg-gradient-to-r from-cyan-500 to-purple-600 rounded-lg font-semibold text-white hover:opacity-90 transition-opacity disabled:opacity-50"
+                            className="w-full px-4 py-2 bg-blue-600 rounded-lg font-semibold text-white hover:bg-blue-700 transition-colors disabled:opacity-50"
                         >
                             {loading ? 'Creating...' : 'Create Account'}
                         </button>
@@ -148,25 +148,25 @@ const SignUpPage = () => {
 
                 {step === 'verify' && (
                     <form onSubmit={handleVerify} className="space-y-4">
-                        <div className="flex items-center gap-2 text-sm text-slate-300 mb-2">
-                            <ShieldCheck className="w-4 h-4 text-cyan-400" />
+                        <div className="flex items-center gap-2 text-sm text-slate-600 mb-2">
+                            <ShieldCheck className="w-4 h-4 text-blue-600" />
                             Enter the 6-digit code sent to {email}
                         </div>
 
                         <div>
-                            <label className="block text-xs font-medium text-slate-400 mb-1">Verification Code</label>
+                            <label className="block text-xs font-medium text-slate-600 mb-1">Verification Code</label>
                             <input
                                 type="text"
                                 value={code}
                                 onChange={(e) => setCode(e.target.value)}
-                                className="w-full px-4 py-2 bg-slate-950 border border-slate-800 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                                className="w-full px-4 py-2 bg-white border border-slate-200 rounded-lg text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
                                 placeholder="123456"
                                 required
                             />
                         </div>
 
                         {error && (
-                            <div className="text-sm text-red-400 bg-red-950/40 border border-red-900 rounded-lg p-3">
+                            <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg p-3">
                                 {error}
                             </div>
                         )}
@@ -174,22 +174,22 @@ const SignUpPage = () => {
                         <button
                             type="submit"
                             disabled={!isLoaded || loading}
-                            className="w-full px-4 py-2 bg-gradient-to-r from-cyan-500 to-purple-600 rounded-lg font-semibold text-white hover:opacity-90 transition-opacity disabled:opacity-50"
+                            className="w-full px-4 py-2 bg-blue-600 rounded-lg font-semibold text-white hover:bg-blue-700 transition-colors disabled:opacity-50"
                         >
                             {loading ? 'Verifying...' : 'Verify Email'}
                         </button>
                     </form>
                 )}
 
-                <div className="mt-6 text-sm text-slate-400">
+                <div className="mt-6 text-sm text-slate-600">
                     Already have an account?{' '}
-                    <Link to="/sign-in" className="text-cyan-400 hover:text-cyan-300">
+                    <Link to="/sign-in" className="text-blue-600 hover:text-blue-700">
                         Sign in
                     </Link>
                 </div>
 
                 <div className="mt-6">
-                    <Link to="/" className="text-xs text-slate-500 hover:text-slate-300 inline-flex items-center gap-1">
+                    <Link to="/" className="text-xs text-slate-500 hover:text-slate-700 inline-flex items-center gap-1">
                         Back to home <ArrowRight className="w-3 h-3" />
                     </Link>
                 </div>

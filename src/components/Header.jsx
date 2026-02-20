@@ -103,7 +103,18 @@ const Header = () => {
 
                     {/* Right: User Profile */}
                     <div className="flex items-center gap-4">
-                        <UserButton afterSignOutUrl="/" />
+                        <UserButton
+                            afterSignOutUrl="/"
+                            appearance={{
+                                elements: {
+                                    footer: "hidden",
+                                    footerAction: "hidden",
+                                    footerActionLink: "hidden",
+                                    userButtonPopoverFooter: "hidden",
+                                    userProfileFooter: "hidden"
+                                }
+                            }}
+                        />
                     </div>
                 </div>
             </div>

@@ -1,1 +1,39 @@
 @import "tailwindcss";
+
+@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@300;400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700&display=swap');
+
+@layer base {
+  :root {
+    --ink-900: #0f172a;
+    --ink-700: #334155;
+    --ink-500: #64748b;
+    --paper-0: #ffffff;
+    --paper-50: #f8fafc;
+    --paper-100: #f1f5f9;
+    --accent-600: #2563eb;
+    --accent-700: #1d4ed8;
+    --accent-100: #dbeafe;
+    --warm-100: #fff7ed;
+    --emerald-100: #dcfce7;
+  }
+
+  html, body, #root {
+    height: 100%;
+  }
+
+  body {
+    font-family: "Manrope", "Space Grotesk", ui-sans-serif, system-ui;
+    color: var(--ink-900);
+    background: var(--paper-50);
+  }
+}
+
+/* Hide Clerk "Secured by" / "Development mode" footer blocks. */
+.cl-footer,
+.cl-footerAction,
+.cl-footerActionLink,
+.cl-cardFooter,
+.cl-userButtonPopoverFooter,
+.cl-userProfileFooter {
+  display: none !important;
+}

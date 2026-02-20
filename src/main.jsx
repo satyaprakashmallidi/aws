@@ -7,13 +7,24 @@ import { ClerkProvider } from '@clerk/clerk-react'
 // Import your publishable key
 const PUBLISHABLE_KEY = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY
 
+const clerkAppearance = {
+  elements: {
+    footer: "hidden",
+    footerAction: "hidden",
+    footerActionLink: "hidden",
+    cardFooter: "hidden",
+    userButtonPopoverFooter: "hidden",
+    userProfileFooter: "hidden"
+  }
+}
+
 if (!PUBLISHABLE_KEY) {
   throw new Error("Missing Publishable Key")
 }
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>
-    <ClerkProvider publishableKey={PUBLISHABLE_KEY} afterSignOutUrl="/">
+    <ClerkProvider publishableKey={PUBLISHABLE_KEY} afterSignOutUrl="/" appearance={clerkAppearance}>
       <App />
     </ClerkProvider>
   </StrictMode>,
