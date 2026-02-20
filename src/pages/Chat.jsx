@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { apiUrl } from '../lib/apiBase';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Send, Bot, User, Loader2, RefreshCw, Trash2, ChevronDown, Plus } from 'lucide-react';
+import { Send, Bot, User, Loader2, RefreshCw, ChevronDown, Plus } from 'lucide-react';
 
 const getOrCreateSessionKey = (agentId) => {
     const storageKey = `openclaw.session.${agentId}`;
@@ -99,6 +99,24 @@ const Chat = () => {
         }
     };
 
+    const getLocalSessionKeys = () => {
+        try {
+            const keys = Object.keys(localStorage);
+            const prefix = `openclaw.history.agent:${agentId}:`;
+            const sessionKeys = keys
+                .filter(key => key.startsWith('openclaw.history.'))
+                .map(key => key.replace(/^openclaw\.history\./, ''))
+                .filter(value => value.startsWith(`agent:${agentId}:`));
+            // Include current session even if it has no history yet.
+            if (sessionKey && !sessionKeys.includes(sessionKey)) {
+                sessionKeys.push(sessionKey);
+            }
+            return Array.from(new Set(sessionKeys));
+        } catch {
+            return sessionKey ? [sessionKey] : [];
+        }
+    };
+
     const fetchSessions = async () => {
         setSessionsLoading(true);
         try {
@@ -149,6 +167,26 @@ const Chat = () => {
         if (!sessionKey) return 'No session';
         const match = sessions.find(s => (s?.key || s?.sessionKey || s?.id) === sessionKey);
         return getSessionLabel(match) || (sessionKey.length > 42 ? `${sessionKey.slice(0, 20)}…${sessionKey.slice(-18)}` : sessionKey);
+    };
+
+    const getAllSessionOptions = () => {
+        const serverOptions = sessions.map(s => ({
+            value: s?.key || s?.sessionKey || s?.id || '',
+            label: getSessionLabel(s)
+        })).filter(item => item.value);
+        const localOptions = getLocalSessionKeys().map(key => ({
+            value: key,
+            label: key.length > 42 ? `${key.slice(0, 20)}…${key.slice(-18)}` : key
+        }));
+
+        const combined = [...serverOptions, ...localOptions];
+        const seen = new Set();
+        return combined.filter(item => {
+            if (!item.value) return false;
+            if (seen.has(item.value)) return false;
+            seen.add(item.value);
+            return true;
+        });
     };
 
     const handleSend = async (e) => {
@@ -273,12 +311,6 @@ const Chat = () => {
         }
     };
 
-    const handleClear = async () => {
-        if (!confirm('Clear chat history?')) return;
-        // In a real app, call API to clear history. For now just clear local.
-        setMessages([]);
-    };
-
     return (
         <div className="flex flex-col h-[calc(100vh-8rem)] bg-white rounded-lg shadow overflow-hidden">
             {/* Chat Header */}
@@ -305,12 +337,11 @@ const Chat = () => {
                             disabled={sessionsLoading}
                         >
                             <option value={sessionKey}>{currentSessionLabel()}</option>
-                            {sessions.map((session) => {
-                                const value = session?.key || session?.sessionKey || session?.id || '';
-                                if (!value || value === sessionKey) return null;
+                            {getAllSessionOptions().map((option) => {
+                                if (option.value === sessionKey) return null;
                                 return (
-                                    <option key={value} value={value}>
-                                        {getSessionLabel(session)}
+                                    <option key={option.value} value={option.value}>
+                                        {option.label}
                                     </option>
                                 );
                             })}
@@ -330,13 +361,6 @@ const Chat = () => {
                         title="Refresh History"
                     >
                         <RefreshCw className="w-5 h-5" />
-                    </button>
-                    <button
-                        onClick={handleClear}
-                        className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-full transition-colors"
-                        title="Clear Chat"
-                    >
-                        <Trash2 className="w-5 h-5" />
                     </button>
                 </div>
             </div>

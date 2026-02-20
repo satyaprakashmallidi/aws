@@ -512,9 +512,9 @@ app.get('/api/chat', async (req, res) => {
     try {
         if (action === 'sessions') {
             const response = await invokeTool('sessions_list', {
-                kinds: ['main', 'group', 'cron'],
-                limit: limit ? parseInt(limit, 10) : 100,
-                activeMinutes: 1440,
+                // Broaden filters so older/other kinds show up in the UI selector.
+                limit: limit ? parseInt(limit, 10) : 200,
+                activeMinutes: 43200,
                 messageLimit: 3
             });
             const details = response?.result?.details || {};
