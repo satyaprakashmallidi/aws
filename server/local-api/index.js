@@ -56,7 +56,20 @@ function newSessionId() {
     return crypto.randomBytes(16).toString('hex');
 }
 
-app.use(cors());
+const allowedOrigins = [
+    'https://openclaw-frontend.vercel.app',
+    'https://openclaw.ai',
+    'https://app.openclaw.ai',
+    'https://api.magicteams.ai'
+];
+
+app.use(cors({
+    origin: (origin, callback) => {
+        if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
+        return callback(new Error('Not allowed by CORS'));
+    },
+    credentials: true
+}));
 app.use(express.json({ limit: '2mb' }));
 
 function readJson(filePath) {
