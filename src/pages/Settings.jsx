@@ -167,7 +167,18 @@ const ModelsTab = () => {
         }
     }, [providerKey, providerCatalog]);
 
-    const normalizeModelKey = (provider, modelId) => {
+    
+    const getAuthLabel = (method) => {
+        const provider = providerCatalog.find(p => p.key === providerKey);
+        if (provider?.authLabels?.[method]) return provider.authLabels[method];
+        if (method === 'api_key') return 'API Key';
+        if (method === 'oauth') return 'OAuth';
+        if (method === 'cli_oauth') return 'CLI OAuth';
+        if (method === 'paste_token') return 'Paste Token';
+        return method;
+    };
+
+const normalizeModelKey = (provider, modelId) => {
         if (!modelId) return '';
         const trimmed = String(modelId).trim();
         if (!trimmed) return '';
@@ -406,9 +417,7 @@ const handleSaveToken = async () => {
                             onClick={() => setAuthMethod(method)}
                             className={`px-3 py-1.5 rounded-full text-xs font-semibold border ${authMethod === method ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-gray-200 text-gray-600'}`}
                         >
-                            {method === 'api_key' && 'API Key'}
-                            {method === 'oauth' && 'OAuth'}
-                            {method === 'paste_token' && 'Paste Token'}
+                            {getAuthLabel(method)}
                         </button>
                     ))}
                 </div>
@@ -472,6 +481,13 @@ const handleSaveToken = async () => {
                         >
                             {oauthBusy ? 'Completing...' : 'Complete OAuth'}
                         </button>
+                    </div>
+                )}
+
+                {authMethod === 'cli_oauth' && (
+                    <div className="text-sm text-gray-600 bg-gray-50 border border-gray-200 rounded-lg p-3">
+                        Run the CLI OAuth flow on the server:
+                        <div className="font-mono text-xs mt-2">openclaw models auth login --provider {providerKey}</div>
                     </div>
                 )}
             </div>

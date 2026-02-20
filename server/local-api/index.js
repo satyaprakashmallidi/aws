@@ -32,9 +32,20 @@ const ALLOWED_PROVIDERS = new Set([
 ]);
 
 const PROVIDER_CATALOG = [
+    {
+        key: 'google',
+        label: 'Google',
+        authMethods: ['api_key', 'oauth', 'cli_oauth'],
+        authLabels: {
+            api_key: 'Google Gemini API key',
+            oauth: 'Google Antigravity OAuth',
+            cli_oauth: 'Google Gemini CLI OAuth'
+        }
+    },
+    { key: 'google-antigravity', label: 'Google Antigravity', authMethods: ['oauth'] },
+    { key: 'gemini', label: 'Gemini', authMethods: ['api_key', 'cli_oauth'] },
     { key: 'openai', label: 'OpenAI', authMethods: ['api_key', 'oauth'] },
     { key: 'anthropic', label: 'Anthropic', authMethods: ['api_key'] },
-    { key: 'google', label: 'Google', authMethods: ['api_key'] },
     { key: 'openrouter', label: 'OpenRouter', authMethods: ['api_key'] },
     { key: 'xai', label: 'xAI (Grok)', authMethods: ['api_key'] },
     { key: 'together', label: 'Together AI', authMethods: ['api_key'] },
