@@ -544,7 +544,8 @@ app.post('/api/providers/oauth/start', (req, res) => {
 
     child.stdout.on('data', (data) => {
         stdout += data.toString();
-        const match = stdout.match(/https:\\/\\/accounts\\.google\\.com\\/o\\/oauth2\\/v2\\/auth[^\\s]+/);
+        const pattern = new RegExp('https://accounts\\.google\\.com/o/oauth2/v2/auth\\S+');
+        const match = stdout.match(pattern);
         if (match && !resolved) {
             resolved = true;
             const authUrl = match[0];
