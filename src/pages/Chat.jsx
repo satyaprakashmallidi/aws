@@ -17,245 +17,6 @@ const getOrCreateSessionKey = (agentId) => {
     return sessionKey;
 };
 
-const getLocalHistory = (sessionKey) => {
-    try {
-        const raw = localStorage.getItem(`openclaw.history.${sessionKey}`);
-        return raw ? JSON.parse(raw) : [];
-    } catch {
-        return [];
-    }
-};
-
-const setLocalHistory = (sessionKey, messages) => {
-    try {
-        localStorage.setItem(`openclaw.history.${sessionKey}`, JSON.stringify(messages));
-    } catch {
-        // Ignore storage errors (quota, private mode, etc.)
-    }
-};
-
-const normalizeContent = (content) => {
-    if (content === null || content === undefined) return '';
-    if (typeof content === 'string') return content;
-    if (Array.isArray(content)) {
-        // OpenClaw tool/content arrays: prefer text parts if present.
-        const textParts = content
-            .map(part => {
-                if (typeof part === 'string') return part;
-                if (part?.type === 'text' && typeof part.text === 'string') return part.text;
-                return '';
-            })
-            .filter(Boolean);
-        if (textParts.length) return textParts.join('\n');
-        try {
-            return JSON.stringify(content);
-        } catch {
-            return String(content);
-        }
-    }
-    if (typeof content === 'object') {
-        if (content?.type === 'text' && typeof content.text === 'string') return content.text;
-        try {
-            return JSON.stringify(content, null, 2);
-        } catch {
-            return String(content);
-        }
-    }
-    return String(content);
-};
-
-const Chat = () => {
-    const [messages, setMessages] = useState([]);
-    const [input, setInput] = useState('');
-    const [sending, setSending] = useState(false);
-    const [loading, setLoading] = useState(true);
-    const [agentId, setAgentId] = useState('main'); // Default to main agent
-    const [sessionKey, setSessionKey] = useState('');
-    const [sessions, setSessions] = useState([]);
-    const [sessionsLoading, setSessionsLoading] = useState(false);
-    const [errorMessage, setErrorMessage] = useState('');
-    const messagesEndRef = useRef(null);
-
-    useEffect(() => {
-        const key = getOrCreateSessionKey(agentId);
-        setSessionKey(key);
-    }, [agentId]);
-
-    useEffect(() => {
-        if (sessionKey) {
-            fetchHistory();
-        }
-    }, [agentId, sessionKey]);
-
-    useEffect(() => {
-        fetchSessions();
-    }, [agentId]);
-
-    useEffect(() => {
-        scrollToBottom();
-    }, [messages]);
-
-    const scrollToBottom = () => {
-        messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-    };
-
-    const fetchHistory = async () => {
-        setLoading(true);
-        try {
-            const response = await fetch(apiUrl(`/api/chat?action=history&sessionKey=${encodeURIComponent(sessionKey)}&limit=50`));
-
-            if (response.ok) {
-                const data = await response.json();
-                const history = (data.messages || []).map(m => ({
-                    role: m.role,
-                    content: normalizeContent(m.content),
-                    timestamp: m.created_at || m.timestamp
-                }));
-
-                if (history.length > 0) {
-                    setMessages(history);
-                    setLocalHistory(sessionKey, history);
-                } else {
-                    const localHistory = getLocalHistory(sessionKey);
-                    setMessages(localHistory);
-                }
-            }
-        } catch (error) {
-            console.error('Failed to fetch chat history:', error);
-            const localHistory = getLocalHistory(sessionKey);
-            setMessages(localHistory);
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    const getLocalSessionKeys = () => {
-        try {
-            const keys = Object.keys(localStorage);
-            const prefix = `openclaw.history.agent:${agentId}:`;
-            const sessionKeys = keys
-                .filter(key => key.startsWith('openclaw.history.'))
-                .map(key => key.replace(/^openclaw\.history\./, ''))
-                .filter(value => value.startsWith(`agent:${agentId}:`));
-            // Include current session even if it has no history yet.
-            if (sessionKey && !sessionKeys.includes(sessionKey)) {
-                sessionKeys.push(sessionKey);
-            }
-            return Array.from(new Set(sessionKeys));
-        } catch {
-            return sessionKey ? [sessionKey] : [];
-        }
-    };
-
-    const fetchSessions = async () => {
-        setSessionsLoading(true);
-        try {
-            const response = await fetch(apiUrl('/api/chat?action=sessions'));
-            if (response.ok) {
-                const data = await response.json();
-                const list = data.sessions || data?.result?.details?.sessions || [];
-                setSessions(list);
-            }
-        } catch (error) {
-            console.error('Failed to fetch sessions:', error);
-        } finally {
-            setSessionsLoading(false);
-        }
-    };
-
-    const setSessionKeyPersisted = (key) => {
-        if (!key) return;
-        try {
-            localStorage.setItem(`openclaw.session.${agentId}`, key);
-        } catch {
-            // Ignore storage errors
-        }
-        setSessionKey(key);
-    };
-
-    const createNewSession = () => {
-        const uuid = (typeof crypto !== 'undefined' && crypto.randomUUID)
-            ? crypto.randomUUID()
-            : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-        const key = `agent:${agentId}:${uuid}`;
-        setSessionKeyPersisted(key);
-        setMessages([]);
-    };
-
-    const getSessionLabel = (session) => {
-        const raw = session?.name
-            || session?.title
-            || session?.key
-            || session?.sessionKey
-            || session?.id
-            || '';
-        if (!raw) return '';
-        return raw.length > 42 ? `${raw.slice(0, 20)}…${raw.slice(-18)}` : raw;
-    };
-
-    const currentSessionLabel = () => {
-        if (!sessionKey) return 'No session';
-        const match = sessions.find(s => (s?.key || s?.sessionKey || s?.id) === sessionKey);
-        return getSessionLabel(match) || (sessionKey.length > 42 ? `${sessionKey.slice(0, 20)}…${sessionKey.slice(-18)}` : sessionKey);
-    };
-
-    const getAllSessionOptions = () => {
-        const serverOptions = sessions.map(s => ({
-            value: s?.key || s?.sessionKey || s?.id || '',
-            label: getSessionLabel(s)
-        })).filter(item => item.value);
-        const localOptions = getLocalSessionKeys().map(key => ({
-            value: key,
-            label: key.length > 42 ? `${key.slice(0, 20)}…${key.slice(-18)}` : key
-        }));
-
-        const combined = [...serverOptions, ...localOptions];
-        const seen = new Set();
-        return combined.filter(item => {
-            if (!item.value) return false;
-            if (seen.has(item.value)) return false;
-            seen.add(item.value);
-            return true;
-        });
-    };
-
-    const handleSend = async (e) => {
-        e.preventDefault();
-        if (!input.trim() || sending) return;
-
-        const userMessage = {
-            role: 'user',
-            content: input,
-            timestamp: new Date().toISOString()
-        };
-
-        // Optimistically add user message
-        setMessages(prev => {
-            const next = [...prev, userMessage];
-            setLocalHistory(sessionKey, next);
-            return next;
-        });
-        setInput('');
-        setSending(true);
-        setErrorMessage('');
-
-        try {
-            const response = await fetch(apiUrl('/api/chat'), {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    message: userMessage.content,
-                    agentId,
-                    sessionId: sessionKey,
-                    stream: true
-                })
-            });
-
-            if (!response.ok) {
-                const errorText = await response.text();
-                throw new Error(errorText || `Request failed: ${response.status}`);
-            }
-
             const reader = response.body?.getReader();
             if (!reader) {
                 const data = await response.json();
@@ -268,8 +29,7 @@ const Chat = () => {
                     };
                     setMessages(prev => {
                         const next = [...prev, botMessage];
-                        setLocalHistory(sessionKey, next);
-                        return next;
+                                    return next;
                     });
                 }
                 return;
@@ -284,8 +44,7 @@ const Chat = () => {
                 setMessages(prev => {
                     const next = [...prev, { role: 'assistant', content: '', timestamp: new Date().toISOString() }];
                     assistantIndex = next.length - 1;
-                    setLocalHistory(sessionKey, next);
-                    return next;
+                            return next;
                 });
             };
 
@@ -319,8 +78,7 @@ const Chat = () => {
                                 ...current,
                                 content: (current?.content || '') + normalizeContent(delta)
                             };
-                            setLocalHistory(sessionKey, next);
-                            return next;
+                                            return next;
                         });
                     } catch (e) {
                         // Ignore non-JSON SSE lines
@@ -333,8 +91,7 @@ const Chat = () => {
             setErrorMessage(message);
             setMessages(prev => {
                 const next = [...prev, { role: 'error', content: message, timestamp: new Date().toISOString() }];
-                setLocalHistory(sessionKey, next);
-                return next;
+                    return next;
             });
         } finally {
             setSending(false);
