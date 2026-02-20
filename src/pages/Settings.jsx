@@ -89,6 +89,21 @@ const ModelsTab = () => {
 
     const loadGatewayModels = async () => {
         try {
+            const response = await fetch(apiUrl('/api/models/catalog-all'));
+            if (response.ok) {
+                const data = await response.json();
+                const list = Array.isArray(data.models) ? data.models : [];
+                if (list.length) {
+                    setGatewayModels(list);
+                    return;
+                }
+            }
+        } catch {
+            // ignore
+        }
+
+        
+        try {
             const response = await fetch(apiUrl('/api/models/gateway'));
             if (!response.ok) return;
             const data = await response.json();

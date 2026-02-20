@@ -395,10 +395,24 @@ app.get('/api/models/catalog', (req, res) => {
 app.get('/api/models/gateway', async (req, res) => {
     try {
         try {
-            const response = await invokeTool('models_list', {});
-            const details = response?.result?.details || {};
-            const models = response?.models || details.models || [];
-            return res.json({ models, source: 'models_list' });
+            const toolCandidates = ['models_list', 'models.list', 'list_models', 'modelsList', 'session_status'];
+            let lastError = null;
+            for (const tool of toolCandidates) {
+                try {
+                    const response = await invokeTool(tool, {});
+                    const details = response?.result?.details || {};
+                    const models = response?.models || details.models || details.availableModels || details.model || [];
+                    if (Array.isArray(models)) {
+                        return res.json({ models, source: tool });
+                    }
+                    if (typeof models === 'string') {
+                        return res.json({ models: [models], source: tool });
+                    }
+                } catch (err) {
+                    lastError = err;
+                }
+            }
+            if (lastError) throw lastError;
         } catch (error) {
             // Fallback: derive models from active sessions if models_list is not exposed.
             const fallback = await invokeTool('sessions_list', { activeMinutes: 1440, limit: 500 });
@@ -415,6 +429,36 @@ app.get('/api/models/gateway', async (req, res) => {
             }
             return res.json({ models, source: 'sessions_list', note: 'models_list tool not available' });
         }
+    } catch (error) {
+        return res.status(500).json({ error: error.message });
+    }
+});
+
+app.get('/api/models/catalog-all', async (req, res) => {
+    try {
+        execFile(
+            'openclaw',
+            ['models', 'list', '--all', '--json'],
+            { timeout: 15000, maxBuffer: 10 * 1024 * 1024 },
+            (error, stdout, stderr) => {
+                if (error) {
+                    return res.status(500).json({
+                        error: error.message,
+                        stderr: stderr?.toString()?.slice(0, 500)
+                    });
+                }
+                try {
+                    const parsed = JSON.parse(stdout);
+                    const models = parsed?.models || parsed?.data || parsed || [];
+                    return res.json({ models, source: 'cli' });
+                } catch (parseError) {
+                    return res.status(500).json({
+                        error: 'Failed to parse models list output',
+                        details: parseError.message
+                    });
+                }
+            }
+        );
     } catch (error) {
         return res.status(500).json({ error: error.message });
     }
