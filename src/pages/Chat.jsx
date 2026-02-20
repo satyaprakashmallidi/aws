@@ -34,6 +34,36 @@ const setLocalHistory = (sessionKey, messages) => {
     }
 };
 
+const normalizeContent = (content) => {
+    if (content === null || content === undefined) return '';
+    if (typeof content === 'string') return content;
+    if (Array.isArray(content)) {
+        // OpenClaw tool/content arrays: prefer text parts if present.
+        const textParts = content
+            .map(part => {
+                if (typeof part === 'string') return part;
+                if (part?.type === 'text' && typeof part.text === 'string') return part.text;
+                return '';
+            })
+            .filter(Boolean);
+        if (textParts.length) return textParts.join('\n');
+        try {
+            return JSON.stringify(content);
+        } catch {
+            return String(content);
+        }
+    }
+    if (typeof content === 'object') {
+        if (content?.type === 'text' && typeof content.text === 'string') return content.text;
+        try {
+            return JSON.stringify(content, null, 2);
+        } catch {
+            return String(content);
+        }
+    }
+    return String(content);
+};
+
 const Chat = () => {
     const [messages, setMessages] = useState([]);
     const [input, setInput] = useState('');
@@ -78,7 +108,7 @@ const Chat = () => {
                 const data = await response.json();
                 const history = (data.messages || []).map(m => ({
                     role: m.role,
-                    content: m.content,
+                    content: normalizeContent(m.content),
                     timestamp: m.created_at || m.timestamp
                 }));
 
@@ -233,7 +263,7 @@ const Chat = () => {
                 if (content) {
                     const botMessage = {
                         role: 'assistant',
-                        content,
+                        content: normalizeContent(content),
                         timestamp: new Date().toISOString()
                     };
                     setMessages(prev => {
@@ -287,7 +317,7 @@ const Chat = () => {
                             const current = next[assistantIndex];
                             next[assistantIndex] = {
                                 ...current,
-                                content: (current?.content || '') + delta
+                                content: (current?.content || '') + normalizeContent(delta)
                             };
                             setLocalHistory(sessionKey, next);
                             return next;
