@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+﻿import React, { useEffect, useRef, useState } from 'react';
 import { apiUrl } from '../lib/apiBase';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -17,6 +17,170 @@ const getOrCreateSessionKey = (agentId) => {
     return sessionKey;
 };
 
+const createSessionKey = (agentId) => {
+    const uuid = (typeof crypto !== 'undefined' && crypto.randomUUID)
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    return `agent:${agentId}:${uuid}`;
+};
+
+const normalizeContent = (content) => {
+    if (content === undefined || content === null) return '';
+    if (Array.isArray(content)) {
+        return content.map((part) => {
+            if (typeof part === 'string') return part;
+            if (part?.text) return part.text;
+            if (part?.content) return part.content;
+            return '';
+        }).join('');
+    }
+    if (typeof content === 'object') return JSON.stringify(content, null, 2);
+    return String(content);
+};
+
+const getSessionKeyValue = (session) => session?.sessionKey || session?.key || session?.id || '';
+
+const shortenSessionKey = (key) => {
+    if (!key) return '';
+    const parts = String(key).split(':');
+    if (parts.length >= 3) {
+        const suffix = parts[2].slice(0, 8);
+        return `${parts[0]}:${parts[1]}:${suffix}`;
+    }
+    return String(key).slice(0, 20);
+};
+
+const formatSessionLabel = (session) => {
+    const key = getSessionKeyValue(session);
+    const shortKey = shortenSessionKey(key) || 'session';
+    const kind = session?.kind ? `${session.kind} · ` : '';
+    const model = session?.model ? ` · ${session.model}` : '';
+    return `${kind}${shortKey}${model}`;
+};
+
+const Chat = () => {
+    const agentId = 'main';
+    const [sessionKey, setSessionKey] = useState('');
+    const [sessions, setSessions] = useState([]);
+    const [sessionsLoading, setSessionsLoading] = useState(false);
+    const [messages, setMessages] = useState([]);
+    const [input, setInput] = useState('');
+    const [loading, setLoading] = useState(true);
+    const [sending, setSending] = useState(false);
+    const [errorMessage, setErrorMessage] = useState('');
+    const messagesEndRef = useRef(null);
+
+    const fetchSessions = async () => {
+        setSessionsLoading(true);
+        try {
+            const response = await fetch(apiUrl('/api/chat?action=sessions'));
+            if (!response.ok) throw new Error('Failed to load sessions');
+            const data = await response.json();
+            const list = Array.isArray(data.sessions) ? data.sessions : [];
+            setSessions(list);
+        } catch (error) {
+            console.error('Failed to fetch sessions:', error);
+        } finally {
+            setSessionsLoading(false);
+        }
+    };
+
+    const fetchHistory = async (targetKey) => {
+        if (!targetKey) return;
+        setLoading(true);
+        setErrorMessage('');
+        try {
+            const url = apiUrl(`/api/chat?action=history&sessionKey=${encodeURIComponent(targetKey)}&limit=100`);
+            const response = await fetch(url);
+            if (!response.ok) throw new Error('Failed to load chat history');
+            const data = await response.json();
+            const list = Array.isArray(data.messages) ? data.messages : [];
+            const normalized = list
+                .filter(msg => msg?.role !== 'tool')
+                .map((msg) => ({
+                    role: msg.role === 'user' ? 'user' : 'assistant',
+                    content: normalizeContent(msg.content),
+                    timestamp: msg.timestamp || msg.createdAt || new Date().toISOString()
+                }));
+            setMessages(normalized);
+        } catch (error) {
+            console.error('Failed to fetch history:', error);
+            setErrorMessage(error.message || 'Failed to fetch history');
+            setMessages([]);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const setSessionKeyPersisted = (nextKey) => {
+        if (!nextKey || nextKey === sessionKey) return;
+        localStorage.setItem(`openclaw.session.${agentId}`, nextKey);
+        setSessionKey(nextKey);
+        setMessages([]);
+        fetchHistory(nextKey);
+    };
+
+    const createNewSession = () => {
+        const nextKey = createSessionKey(agentId);
+        localStorage.setItem(`openclaw.session.${agentId}`, nextKey);
+        setSessionKey(nextKey);
+        setMessages([]);
+        setErrorMessage('');
+        fetchSessions();
+    };
+
+    const currentSessionLabel = () => {
+        const match = sessions.find(s => getSessionKeyValue(s) === sessionKey);
+        if (match) return formatSessionLabel(match);
+        return shortenSessionKey(sessionKey) || 'Current session';
+    };
+
+    const getAllSessionOptions = () => {
+        const options = sessions
+            .map(session => ({
+                value: getSessionKeyValue(session),
+                label: formatSessionLabel(session)
+            }))
+            .filter(option => option.value);
+
+        const hasCurrent = options.some(option => option.value === sessionKey);
+        if (!hasCurrent && sessionKey) {
+            options.unshift({ value: sessionKey, label: shortenSessionKey(sessionKey) || 'Current session' });
+        }
+        return options;
+    };
+
+    const handleSend = async (e) => {
+        e.preventDefault();
+        const text = input.trim();
+        if (!text || sending) return;
+
+        setSending(true);
+        setErrorMessage('');
+
+        setMessages(prev => ([
+            ...prev,
+            { role: 'user', content: text, timestamp: new Date().toISOString() }
+        ]));
+        setInput('');
+
+        try {
+            const response = await fetch(apiUrl('/api/chat'), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    message: text,
+                    agentId,
+                    sessionId: sessionKey,
+                    stream: true
+                })
+            });
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                throw new Error(errorText || `Request failed with status ${response.status}`);
+            }
+
             const reader = response.body?.getReader();
             if (!reader) {
                 const data = await response.json();
@@ -29,7 +193,7 @@ const getOrCreateSessionKey = (agentId) => {
                     };
                     setMessages(prev => {
                         const next = [...prev, botMessage];
-                                    return next;
+                        return next;
                     });
                 }
                 return;
@@ -44,7 +208,7 @@ const getOrCreateSessionKey = (agentId) => {
                 setMessages(prev => {
                     const next = [...prev, { role: 'assistant', content: '', timestamp: new Date().toISOString() }];
                     assistantIndex = next.length - 1;
-                            return next;
+                    return next;
                 });
             };
 
@@ -78,7 +242,7 @@ const getOrCreateSessionKey = (agentId) => {
                                 ...current,
                                 content: (current?.content || '') + normalizeContent(delta)
                             };
-                                            return next;
+                            return next;
                         });
                     } catch (e) {
                         // Ignore non-JSON SSE lines
@@ -91,12 +255,23 @@ const getOrCreateSessionKey = (agentId) => {
             setErrorMessage(message);
             setMessages(prev => {
                 const next = [...prev, { role: 'error', content: message, timestamp: new Date().toISOString() }];
-                    return next;
+                return next;
             });
         } finally {
             setSending(false);
         }
     };
+
+    useEffect(() => {
+        const key = getOrCreateSessionKey(agentId);
+        setSessionKey(key);
+        fetchSessions();
+        fetchHistory(key);
+    }, [agentId]);
+
+    useEffect(() => {
+        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }, [messages, sending]);
 
     return (
         <div className="flex flex-col h-[calc(100vh-8rem)] bg-white rounded-lg shadow overflow-hidden">
@@ -143,7 +318,7 @@ const getOrCreateSessionKey = (agentId) => {
                         <Plus className="w-5 h-5" />
                     </button>
                     <button
-                        onClick={fetchHistory}
+                        onClick={() => fetchHistory(sessionKey)}
                         className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-colors"
                         title="Refresh History"
                     >
