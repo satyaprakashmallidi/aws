@@ -4,6 +4,7 @@ import path from 'path';
 import os from 'os';
 import cors from 'cors';
 import { execFile, spawn } from 'child_process';
+import crypto from 'crypto';
 
 const app = express();
 
@@ -48,6 +49,12 @@ const PROVIDER_CATALOG = [
     { key: 'openai-codex', label: 'OpenAI Codex (ChatGPT OAuth)', authMethods: ['oauth'] },
     { key: 'custom', label: 'Custom Provider', authMethods: ['api_key'] }
 ];
+
+const OAUTH_SESSIONS = new Map();
+
+function newSessionId() {
+    return crypto.randomBytes(16).toString('hex');
+}
 
 app.use(cors());
 app.use(express.json({ limit: '2mb' }));
@@ -486,6 +493,107 @@ app.post('/api/providers/custom', (req, res) => {
     } catch (error) {
         return res.status(500).json({ error: error.message });
     }
+});
+
+app.post('/api/providers/oauth/start', (req, res) => {
+    if (!LOCAL_API_SECRET) {
+        return res.status(500).json({ error: 'LOCAL_API_SECRET not set' });
+    }
+    const provided = req.headers['x-api-secret'];
+    if (!provided || provided !== LOCAL_API_SECRET) {
+        return res.status(401).json({ error: 'Unauthorized' });
+    }
+    const { provider } = req.body || {};
+    if (!provider) return res.status(400).json({ error: 'Provider is required' });
+
+    const child = spawn('openclaw', ['models', 'auth', 'login', '--provider', provider], {
+        stdio: ['pipe', 'pipe', 'pipe']
+    });
+
+    const sessionId = newSessionId();
+    let stdout = '';
+    let stderr = '';
+    let resolved = false;
+
+    const cleanup = () => {
+        if (OAUTH_SESSIONS.has(sessionId)) {
+            OAUTH_SESSIONS.delete(sessionId);
+        }
+    };
+
+    const timeout = setTimeout(() => {
+        if (!resolved) {
+            resolved = true;
+            cleanup();
+            try { child.kill(); } catch { /* ignore */ }
+        }
+    }, 5 * 60 * 1000);
+
+    child.stdout.on('data', (data) => {
+        stdout += data.toString();
+        const match = stdout.match(/https:\\/\\/accounts\\.google\\.com\\/o\\/oauth2\\/v2\\/auth[^\\s]+/);
+        if (match && !resolved) {
+            resolved = true;
+            const authUrl = match[0];
+            OAUTH_SESSIONS.set(sessionId, { child, provider, startedAt: Date.now(), timeout });
+            return res.json({ sessionId, authUrl });
+        }
+    });
+
+    child.stderr.on('data', (data) => {
+        stderr += data.toString();
+    });
+
+    child.on('close', (code) => {
+        if (!resolved) {
+            clearTimeout(timeout);
+            cleanup();
+            return res.status(500).json({
+                error: `OAuth process exited with code ${code}`,
+                stderr: stderr.slice(0, 500)
+            });
+        }
+    });
+});
+
+app.post('/api/providers/oauth/complete', (req, res) => {
+    if (!LOCAL_API_SECRET) {
+        return res.status(500).json({ error: 'LOCAL_API_SECRET not set' });
+    }
+    const provided = req.headers['x-api-secret'];
+    if (!provided || provided !== LOCAL_API_SECRET) {
+        return res.status(401).json({ error: 'Unauthorized' });
+    }
+    const { sessionId, redirectUrl } = req.body || {};
+    if (!sessionId || !redirectUrl) {
+        return res.status(400).json({ error: 'sessionId and redirectUrl are required' });
+    }
+    const session = OAUTH_SESSIONS.get(sessionId);
+    if (!session) {
+        return res.status(404).json({ error: 'OAuth session not found or expired' });
+    }
+
+    const { child, timeout } = session;
+    let stdout = '';
+    let stderr = '';
+
+    child.stdout.on('data', (data) => { stdout += data.toString(); });
+    child.stderr.on('data', (data) => { stderr += data.toString(); });
+
+    child.on('close', (code) => {
+        clearTimeout(timeout);
+        OAUTH_SESSIONS.delete(sessionId);
+        if (code !== 0) {
+            return res.status(500).json({
+                error: `OAuth completion failed with code ${code}`,
+                stderr: stderr.slice(0, 500)
+            });
+        }
+        return res.json({ ok: true, output: stdout.slice(0, 2000) });
+    });
+
+    child.stdin.write(`${redirectUrl}\n`);
+    child.stdin.end();
 });
 
 app.get('/api/soul', (req, res) => {
