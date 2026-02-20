@@ -35,30 +35,28 @@ const PROVIDER_CATALOG = [
     {
         key: 'google',
         label: 'Google',
-        authMethods: ['api_key', 'oauth', 'cli_oauth'],
+        authMethods: ['api_key', 'paste_token'],
         authLabels: {
             api_key: 'Google Gemini API key',
-            oauth: 'Google Antigravity OAuth',
-            cli_oauth: 'Google Gemini CLI OAuth'
+            paste_token: 'Paste token'
         }
     },
-    { key: 'google-antigravity', label: 'Google Antigravity', authMethods: ['oauth'] },
-    { key: 'gemini', label: 'Gemini', authMethods: ['api_key', 'cli_oauth'] },
-    { key: 'openai', label: 'OpenAI', authMethods: ['api_key', 'oauth'] },
-    { key: 'anthropic', label: 'Anthropic', authMethods: ['api_key'] },
-    { key: 'openrouter', label: 'OpenRouter', authMethods: ['api_key'] },
-    { key: 'xai', label: 'xAI (Grok)', authMethods: ['api_key'] },
-    { key: 'together', label: 'Together AI', authMethods: ['api_key'] },
-    { key: 'groq', label: 'Groq', authMethods: ['api_key'] },
-    { key: 'fireworks', label: 'Fireworks', authMethods: ['api_key'] },
-    { key: 'perplexity', label: 'Perplexity', authMethods: ['api_key'] },
-    { key: 'mistral', label: 'Mistral', authMethods: ['api_key'] },
-    { key: 'cohere', label: 'Cohere', authMethods: ['api_key'] },
-    { key: 'huggingface', label: 'Hugging Face', authMethods: ['api_key'] },
-    { key: 'cloudflare', label: 'Cloudflare AI Gateway', authMethods: ['api_key'] },
-    { key: 'vercel-ai-gateway', label: 'Vercel AI Gateway', authMethods: ['api_key'] },
-    { key: 'openai-codex', label: 'OpenAI Codex (ChatGPT OAuth)', authMethods: ['oauth'] },
-    { key: 'custom', label: 'Custom Provider', authMethods: ['api_key'] }
+    { key: 'google-antigravity', label: 'Google Antigravity', authMethods: ['api_key', 'paste_token'] },
+    { key: 'gemini', label: 'Gemini', authMethods: ['api_key', 'paste_token'] },
+    { key: 'openai', label: 'OpenAI', authMethods: ['api_key', 'paste_token'] },
+    { key: 'anthropic', label: 'Anthropic', authMethods: ['api_key', 'paste_token'] },
+    { key: 'openrouter', label: 'OpenRouter', authMethods: ['api_key', 'paste_token'] },
+    { key: 'xai', label: 'xAI (Grok)', authMethods: ['api_key', 'paste_token'] },
+    { key: 'together', label: 'Together AI', authMethods: ['api_key', 'paste_token'] },
+    { key: 'groq', label: 'Groq', authMethods: ['api_key', 'paste_token'] },
+    { key: 'fireworks', label: 'Fireworks', authMethods: ['api_key', 'paste_token'] },
+    { key: 'perplexity', label: 'Perplexity', authMethods: ['api_key', 'paste_token'] },
+    { key: 'mistral', label: 'Mistral', authMethods: ['api_key', 'paste_token'] },
+    { key: 'cohere', label: 'Cohere', authMethods: ['api_key', 'paste_token'] },
+    { key: 'huggingface', label: 'Hugging Face', authMethods: ['api_key', 'paste_token'] },
+    { key: 'cloudflare', label: 'Cloudflare AI Gateway', authMethods: ['api_key', 'paste_token'] },
+    { key: 'vercel-ai-gateway', label: 'Vercel AI Gateway', authMethods: ['api_key', 'paste_token'] },
+    { key: 'custom', label: 'Custom Provider', authMethods: ['api_key', 'paste_token'] }
 ];
 
 const OAUTH_SESSIONS = new Map();

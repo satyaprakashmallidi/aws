@@ -53,11 +53,6 @@ const ModelsTab = () => {
     const [authMethod, setAuthMethod] = useState('api_key');
     const [token, setToken] = useState('');
     const [tokenExpiry, setTokenExpiry] = useState('');
-    const [oauthSessionId, setOauthSessionId] = useState('');
-    const [oauthAuthUrl, setOauthAuthUrl] = useState('');
-    const [oauthRedirectUrl, setOauthRedirectUrl] = useState('');
-    const [oauthBusy, setOauthBusy] = useState(false);
-
     const [models, setModels] = useState([]);
     const [gatewayModels, setGatewayModels] = useState([]);
     const [modelSearch, setModelSearch] = useState('');
@@ -106,8 +101,6 @@ const ModelsTab = () => {
         } catch {
             // ignore
         }
-
-        
         try {
             const response = await fetch(apiUrl('/api/models/gateway'));
             if (!response.ok) return;
@@ -167,18 +160,15 @@ const ModelsTab = () => {
         }
     }, [providerKey, providerCatalog]);
 
-    
     const getAuthLabel = (method) => {
         const provider = providerCatalog.find(p => p.key === providerKey);
         if (provider?.authLabels?.[method]) return provider.authLabels[method];
         if (method === 'api_key') return 'API Key';
-        if (method === 'oauth') return 'OAuth';
-        if (method === 'cli_oauth') return 'CLI OAuth';
         if (method === 'paste_token') return 'Paste Token';
         return method;
     };
 
-const normalizeModelKey = (provider, modelId) => {
+    const normalizeModelKey = (provider, modelId) => {
         if (!modelId) return '';
         const trimmed = String(modelId).trim();
         if (!trimmed) return '';
@@ -243,65 +233,7 @@ const normalizeModelKey = (provider, modelId) => {
         }
     };
 
-    
-
-    const handleStartOAuth = async () => {
-        setOauthBusy(true);
-        setError('');
-        setStatus('');
-        try {
-            const response = await fetch(apiUrl('/api/providers/oauth/start'), {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    ...(import.meta.env.VITE_LOCAL_API_SECRET
-                        ? { 'x-api-secret': import.meta.env.VITE_LOCAL_API_SECRET }
-                        : {})
-                },
-                body: JSON.stringify({ provider: providerKey })
-            });
-            const data = await response.json().catch(() => ({}));
-            if (!response.ok) throw new Error(data.error || 'Failed to start OAuth');
-            setOauthSessionId(data.sessionId || '');
-            setOauthAuthUrl(data.authUrl || '');
-            setStatus('OAuth started. Open the URL and paste the redirect URL below.');
-        } catch (e) {
-            setError(e.message);
-        } finally {
-            setOauthBusy(false);
-        }
-    };
-
-    const handleCompleteOAuth = async () => {
-        if (!oauthSessionId || !oauthRedirectUrl) return;
-        setOauthBusy(true);
-        setError('');
-        setStatus('');
-        try {
-            const response = await fetch(apiUrl('/api/providers/oauth/complete'), {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    ...(import.meta.env.VITE_LOCAL_API_SECRET
-                        ? { 'x-api-secret': import.meta.env.VITE_LOCAL_API_SECRET }
-                        : {})
-                },
-                body: JSON.stringify({ sessionId: oauthSessionId, redirectUrl: oauthRedirectUrl })
-            });
-            const data = await response.json().catch(() => ({}));
-            if (!response.ok) throw new Error(data.error || 'OAuth completion failed');
-            setStatus('OAuth complete. Refresh models to see availability.');
-            setOauthRedirectUrl('');
-            setOauthSessionId('');
-            setOauthAuthUrl('');
-            loadGatewayModels();
-        } catch (e) {
-            setError(e.message);
-        } finally {
-            setOauthBusy(false);
-        }
-    };
-const handleSaveToken = async () => {
+    const handleSaveToken = async () => {
         setSaving(true);
         setError('');
         setStatus('');
@@ -422,74 +354,30 @@ const handleSaveToken = async () => {
                     ))}
                 </div>
 
-                {authMethod === 'api_key' || authMethod === 'paste_token' ? (
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-                        <input
-                            type="password"
-                            value={token}
-                            onChange={(e) => setToken(e.target.value)}
-                            className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
-                            placeholder="Provider token"
-                        />
-                        <input
-                            type="text"
-                            value={tokenExpiry}
-                            onChange={(e) => setTokenExpiry(e.target.value)}
-                            className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
-                            placeholder="Expires in (e.g. 365d)"
-                        />
-                        <button
-                            type="button"
-                            onClick={handleSaveToken}
-                            disabled={saving || !token}
-                            className="px-4 py-2 bg-slate-900 text-white rounded-lg text-sm"
-                        >
-                            Save Token
-                        </button>
-                    </div>
-                ) : (
-                    <div className="space-y-3">
-                        <div className="text-sm text-gray-600 bg-gray-50 border border-gray-200 rounded-lg p-3">
-                            Start OAuth to receive a login URL. After login, paste the full redirect URL below.
-                        </div>
-                        <button
-                            type="button"
-                            onClick={handleStartOAuth}
-                            disabled={oauthBusy}
-                            className="px-4 py-2 bg-slate-900 text-white rounded-lg text-sm"
-                        >
-                            {oauthBusy ? 'Starting...' : 'Start OAuth'}
-                        </button>
-                        {oauthAuthUrl && (
-                            <div className="text-xs text-gray-600 break-all bg-white border border-gray-200 rounded-lg p-3">
-                                <div className="font-semibold text-gray-700 mb-1">Auth URL</div>
-                                {oauthAuthUrl}
-                            </div>
-                        )}
-                        <input
-                            type="text"
-                            value={oauthRedirectUrl}
-                            onChange={(e) => setOauthRedirectUrl(e.target.value)}
-                            className="border border-gray-300 rounded-lg px-3 py-2 text-sm w-full"
-                            placeholder="Paste redirect URL here"
-                        />
-                        <button
-                            type="button"
-                            onClick={handleCompleteOAuth}
-                            disabled={oauthBusy || !oauthSessionId || !oauthRedirectUrl}
-                            className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm"
-                        >
-                            {oauthBusy ? 'Completing...' : 'Complete OAuth'}
-                        </button>
-                    </div>
-                )}
-
-                {authMethod === 'cli_oauth' && (
-                    <div className="text-sm text-gray-600 bg-gray-50 border border-gray-200 rounded-lg p-3">
-                        Run the CLI OAuth flow on the server:
-                        <div className="font-mono text-xs mt-2">openclaw models auth login --provider {providerKey}</div>
-                    </div>
-                )}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                    <input
+                        type="password"
+                        value={token}
+                        onChange={(e) => setToken(e.target.value)}
+                        className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                        placeholder="Provider token"
+                    />
+                    <input
+                        type="text"
+                        value={tokenExpiry}
+                        onChange={(e) => setTokenExpiry(e.target.value)}
+                        className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                        placeholder="Expires in (e.g. 365d)"
+                    />
+                    <button
+                        type="button"
+                        onClick={handleSaveToken}
+                        disabled={saving || !token}
+                        className="px-4 py-2 bg-slate-900 text-white rounded-lg text-sm"
+                    >
+                        Save Token
+                    </button>
+                </div>
             </div>
 
             {providerKey === 'custom' && (
