@@ -93,140 +93,128 @@ const SignUpPage = () => {
 
     return (
         <div className="min-h-screen bg-slate-50 text-slate-900 selection:bg-blue-200 selection:text-slate-900 flex items-center justify-center px-6 py-12">
-            <div className="w-full max-w-5xl grid md:grid-cols-[1.05fr_0.95fr] gap-8 bg-white border border-slate-200 rounded-3xl shadow-lg overflow-hidden">
-                <section className="p-10 md:p-12">
-                    <div className="flex items-center gap-3 mb-10">
-                        <div className="w-10 h-10 bg-blue-600 rounded-lg flex items-center justify-center shadow-sm">
-                            <span className="text-white text-lg font-bold">OC</span>
-                        </div>
+            <div className="w-full max-w-md bg-white border border-slate-200 rounded-2xl p-8 shadow-lg">
+                <div className="flex items-center gap-3 mb-8">
+                    <div className="w-10 h-10 bg-blue-600 rounded-lg flex items-center justify-center shadow-sm">
+                        <span className="text-white text-lg font-bold">OC</span>
+                    </div>
+                    <div>
+                        <div className="text-lg font-bold">Magic Teams</div>
+                        <div className="text-xs text-slate-500">OpenClaw Control</div>
+                    </div>
+                </div>
+
+                <h1 className="text-2xl font-bold mb-2">Create your account</h1>
+                <p className="text-sm text-slate-600 mb-6">
+                    Spin up your command center in minutes.
+                </p>
+
+                {step === 'form' && (
+                    <form onSubmit={handleSubmit} className="space-y-4">
                         <div>
-                            <div className="text-lg font-bold">Magic Teams</div>
-                            <div className="text-xs text-slate-500">OpenClaw Control</div>
+                            <label className="block text-xs font-medium text-slate-600 mb-1">Email</label>
+                            <input
+                                type="email"
+                                value={email}
+                                onChange={(e) => setEmail(e.target.value)}
+                                className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-lg text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                placeholder="you@company.com"
+                                required
+                            />
                         </div>
-                    </div>
 
-                    <h1 className="text-3xl font-bold mb-2">Create your account</h1>
-                    <p className="text-sm text-slate-600 mb-8">
-                        Spin up your command center in minutes.
-                    </p>
+                        <div>
+                            <label className="block text-xs font-medium text-slate-600 mb-1">Password</label>
+                            <input
+                                type="password"
+                                value={password}
+                                onChange={(e) => setPassword(e.target.value)}
+                                className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-lg text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                placeholder="••••••••"
+                                required
+                            />
+                        </div>
 
-                    {step === 'form' && (
-                        <form onSubmit={handleSubmit} className="space-y-5">
-                            <div>
-                                <label className="block text-xs font-medium text-slate-600 mb-1">Email</label>
-                                <input
-                                    type="email"
-                                    value={email}
-                                    onChange={(e) => setEmail(e.target.value)}
-                                    className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-lg text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                    placeholder="you@company.com"
-                                    required
-                                />
+                        {error && (
+                            <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg p-3">
+                                {error}
                             </div>
+                        )}
 
-                            <div>
-                                <label className="block text-xs font-medium text-slate-600 mb-1">Password</label>
-                                <input
-                                    type="password"
-                                    value={password}
-                                    onChange={(e) => setPassword(e.target.value)}
-                                    className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-lg text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                    placeholder="••••••••"
-                                    required
-                                />
-                            </div>
-
-                            {error && (
-                                <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg p-3">
-                                    {error}
-                                </div>
-                            )}
-
-                            <button
-                                type="submit"
-                                disabled={!isLoaded || loading}
-                                className="w-full px-4 py-2.5 bg-blue-600 rounded-lg font-semibold text-white hover:bg-blue-700 transition-colors disabled:opacity-60"
-                            >
-                                {loading ? 'Creating...' : 'Create Account'}
-                            </button>
-                        </form>
-                    )}
-
-                    {step === 'verify' && (
-                        <form onSubmit={handleVerify} className="space-y-5">
-                            <div className="flex items-center gap-2 text-sm text-slate-600 mb-2">
-                                <ShieldCheck className="w-4 h-4 text-blue-600" />
-                                Enter the 6-digit code sent to {email}
-                            </div>
-
-                            <div>
-                                <label className="block text-xs font-medium text-slate-600 mb-1">Verification Code</label>
-                                <input
-                                    type="text"
-                                    value={code}
-                                    onChange={(e) => setCode(e.target.value)}
-                                    className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-lg text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                    placeholder="123456"
-                                    required
-                                />
-                            </div>
-
-                            {error && (
-                                <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg p-3">
-                                    {error}
-                                </div>
-                            )}
-
-                            <button
-                                type="submit"
-                                disabled={!isLoaded || loading}
-                                className="w-full px-4 py-2.5 bg-blue-600 rounded-lg font-semibold text-white hover:bg-blue-700 transition-colors disabled:opacity-60"
-                            >
-                                {loading ? 'Verifying...' : 'Verify Email'}
-                            </button>
-                        </form>
-                    )}
-
-                    <div className="mt-6 text-sm text-slate-600">
-                        Already have an account?{' '}
-                        <Link to="/sign-in" className="text-blue-600 hover:text-blue-700">
-                            Sign in
-                        </Link>
-                    </div>
-
-                    <div className="mt-6">
-                        <Link to="/" className="text-xs text-slate-500 hover:text-slate-700 inline-flex items-center gap-1">
-                            Back to home <ArrowRight className="w-3 h-3" />
-                        </Link>
-                    </div>
-                </section>
-
-                <aside className="p-10 md:p-12 bg-slate-50 border-l border-slate-200 flex flex-col justify-between">
-                    <div>
-                        <div className="text-xs uppercase tracking-[0.25em] text-slate-400 mb-3">Access</div>
-                        <h2 className="text-2xl font-semibold text-slate-900 mb-4">Create your workspace</h2>
-                        <p className="text-sm text-slate-600 leading-relaxed">
-                            Keep your teams, sessions, and provider credentials in one secure place.
-                        </p>
-                    </div>
-
-                    <div>
-                        <div className="text-xs uppercase tracking-[0.25em] text-slate-400 mb-3">Single Sign-On</div>
                         <button
-                            type="button"
-                            onClick={handleGoogle}
+                            type="submit"
                             disabled={!isLoaded || loading}
-                            className="w-full flex items-center justify-center gap-3 px-4 py-2.5 bg-white border border-slate-200 rounded-lg font-semibold text-slate-800 hover:bg-slate-100 transition-colors disabled:opacity-60"
+                            className="w-full px-4 py-2.5 bg-blue-600 rounded-lg font-semibold text-white hover:bg-blue-700 transition-colors disabled:opacity-60"
                         >
-                            {loading ? (
-                                <span className="w-5 h-5 border-2 border-slate-300 border-t-slate-800 rounded-full animate-spin" />
-                            ) : (
-                                <GoogleIcon />
-                            )}
-                            Continue with Google
+                            {loading ? 'Creating...' : 'Create Account'}
                         </button>
-                    </div>
-                </aside>
+                    </form>
+                )}
+
+                {step === 'verify' && (
+                    <form onSubmit={handleVerify} className="space-y-4">
+                        <div className="flex items-center gap-2 text-sm text-slate-600 mb-2">
+                            <ShieldCheck className="w-4 h-4 text-blue-600" />
+                            Enter the 6-digit code sent to {email}
+                        </div>
+
+                        <div>
+                            <label className="block text-xs font-medium text-slate-600 mb-1">Verification Code</label>
+                            <input
+                                type="text"
+                                value={code}
+                                onChange={(e) => setCode(e.target.value)}
+                                className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-lg text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                placeholder="123456"
+                                required
+                            />
+                        </div>
+
+                        {error && (
+                            <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg p-3">
+                                {error}
+                            </div>
+                        )}
+
+                        <button
+                            type="submit"
+                            disabled={!isLoaded || loading}
+                            className="w-full px-4 py-2.5 bg-blue-600 rounded-lg font-semibold text-white hover:bg-blue-700 transition-colors disabled:opacity-60"
+                        >
+                            {loading ? 'Verifying...' : 'Verify Email'}
+                        </button>
+                    </form>
+                )}
+
+                <div className="mt-6">
+                    <div className="text-xs uppercase tracking-[0.25em] text-slate-400 mb-3">Single Sign-On</div>
+                    <button
+                        type="button"
+                        onClick={handleGoogle}
+                        disabled={!isLoaded || loading}
+                        className="w-full flex items-center justify-center gap-3 px-4 py-2.5 bg-white border border-slate-200 rounded-lg font-semibold text-slate-800 hover:bg-slate-100 transition-colors disabled:opacity-60"
+                    >
+                        {loading ? (
+                            <span className="w-5 h-5 border-2 border-slate-300 border-t-slate-800 rounded-full animate-spin" />
+                        ) : (
+                            <GoogleIcon />
+                        )}
+                        Continue with Google
+                    </button>
+                </div>
+
+                <div className="mt-6 text-sm text-slate-600">
+                    Already have an account?{' '}
+                    <Link to="/sign-in" className="text-blue-600 hover:text-blue-700">
+                        Sign in
+                    </Link>
+                </div>
+
+                <div className="mt-6">
+                    <Link to="/" className="text-xs text-slate-500 hover:text-slate-700 inline-flex items-center gap-1">
+                        Back to home <ArrowRight className="w-3 h-3" />
+                    </Link>
+                </div>
             </div>
         </div>
     );

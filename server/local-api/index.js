@@ -30,6 +30,25 @@ const ALLOWED_PROVIDERS = new Set([
     'gemini'
 ]);
 
+const PROVIDER_CATALOG = [
+    { key: 'openai', label: 'OpenAI', authMethods: ['api_key', 'oauth'] },
+    { key: 'anthropic', label: 'Anthropic', authMethods: ['api_key'] },
+    { key: 'google', label: 'Google', authMethods: ['api_key'] },
+    { key: 'openrouter', label: 'OpenRouter', authMethods: ['api_key'] },
+    { key: 'xai', label: 'xAI (Grok)', authMethods: ['api_key'] },
+    { key: 'together', label: 'Together AI', authMethods: ['api_key'] },
+    { key: 'groq', label: 'Groq', authMethods: ['api_key'] },
+    { key: 'fireworks', label: 'Fireworks', authMethods: ['api_key'] },
+    { key: 'perplexity', label: 'Perplexity', authMethods: ['api_key'] },
+    { key: 'mistral', label: 'Mistral', authMethods: ['api_key'] },
+    { key: 'cohere', label: 'Cohere', authMethods: ['api_key'] },
+    { key: 'huggingface', label: 'Hugging Face', authMethods: ['api_key'] },
+    { key: 'cloudflare', label: 'Cloudflare AI Gateway', authMethods: ['api_key'] },
+    { key: 'vercel-ai-gateway', label: 'Vercel AI Gateway', authMethods: ['api_key'] },
+    { key: 'openai-codex', label: 'OpenAI Codex (ChatGPT OAuth)', authMethods: ['oauth'] },
+    { key: 'custom', label: 'Custom Provider', authMethods: ['api_key'] }
+];
+
 app.use(cors());
 app.use(express.json({ limit: '2mb' }));
 
@@ -48,6 +67,22 @@ function writeJson(filePath, data) {
         }
     }
     fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
+}
+
+function readConfigSafe() {
+    try {
+        return readJson(OPENCLAW_CONFIG_PATH);
+    } catch {
+        return {};
+    }
+}
+
+function normalizeModelKey(providerKey, modelId) {
+    if (!providerKey || !modelId) return '';
+    const trimmed = String(modelId).trim();
+    if (!trimmed) return '';
+    if (trimmed.includes('/')) return trimmed;
+    return `${providerKey}/${trimmed}`;
 }
 
 function listModelsFromConfig(config) {
@@ -181,7 +216,7 @@ app.get('/api/models', (req, res) => {
 
 app.get('/api/providers', (req, res) => {
     try {
-        const config = readJson(OPENCLAW_CONFIG_PATH);
+        const config = readConfigSafe();
         const providers = Object.keys(config?.models?.providers || {});
         res.json({ providers });
     } catch (error) {
@@ -189,11 +224,15 @@ app.get('/api/providers', (req, res) => {
     }
 });
 
+app.get('/api/providers/catalog', (req, res) => {
+    return res.json({ providers: PROVIDER_CATALOG });
+});
+
 app.get('/api/provider', (req, res) => {
     const { name } = req.query || {};
     if (!name) return res.status(400).json({ error: 'Provider name required' });
     try {
-        const config = readJson(OPENCLAW_CONFIG_PATH);
+        const config = readConfigSafe();
         const provider = config?.models?.providers?.[name];
         if (!provider) return res.status(404).json({ error: 'Provider not found' });
         res.json({ name, provider });
@@ -208,7 +247,7 @@ app.put('/api/provider', (req, res) => {
     if (!name) return res.status(400).json({ error: 'Provider name required' });
     if (provider === undefined) return res.status(400).json({ error: 'Provider payload required' });
     try {
-        const config = readJson(OPENCLAW_CONFIG_PATH);
+        const config = readConfigSafe();
         if (!config.models) config.models = {};
         if (!config.models.providers) config.models.providers = {};
         config.models.providers[name] = provider;
@@ -266,7 +305,7 @@ app.post('/api/model', (req, res) => {
     const { model } = req.body || {};
     if (!model) return res.status(400).json({ error: 'Model is required' });
     try {
-        const config = readJson(OPENCLAW_CONFIG_PATH);
+        const config = readConfigSafe();
         if (!config.agents) config.agents = {};
         if (!config.agents.defaults) config.agents.defaults = {};
         if (!config.agents.defaults.model) config.agents.defaults.model = {};
@@ -295,6 +334,85 @@ app.put('/api/openclaw-config', (req, res) => {
         res.json({ ok: true, path: OPENCLAW_CONFIG_PATH });
     } catch (error) {
         res.status(500).json({ error: error.message });
+    }
+});
+
+app.get('/api/models/config', (req, res) => {
+    try {
+        const config = readConfigSafe();
+        const defaults = config?.agents?.defaults || {};
+        const modelCfg = defaults.model || {};
+        const allowed = Array.isArray(defaults.models) ? defaults.models : [];
+        return res.json({
+            primary: modelCfg.primary || '',
+            fallbacks: Array.isArray(modelCfg.fallbacks) ? modelCfg.fallbacks : [],
+            allowedModels: allowed,
+            providers: config?.models?.providers || {}
+        });
+    } catch (error) {
+        return res.status(500).json({ error: error.message });
+    }
+});
+
+app.post('/api/models/config', (req, res) => {
+    const { primary, fallbacks, allowedModels } = req.body || {};
+    try {
+        const config = readConfigSafe();
+        if (!config.agents) config.agents = {};
+        if (!config.agents.defaults) config.agents.defaults = {};
+        if (!config.agents.defaults.model) config.agents.defaults.model = {};
+
+        if (primary) {
+            config.agents.defaults.model.primary = primary;
+        }
+        if (Array.isArray(fallbacks)) {
+            config.agents.defaults.model.fallbacks = fallbacks;
+        }
+        if (Array.isArray(allowedModels)) {
+            config.agents.defaults.models = allowedModels;
+        }
+
+        writeJson(OPENCLAW_CONFIG_PATH, config);
+        return res.json({ ok: true });
+    } catch (error) {
+        return res.status(500).json({ error: error.message });
+    }
+});
+
+app.get('/api/models/catalog', (req, res) => {
+    const { provider } = req.query || {};
+    if (!provider) return res.status(400).json({ error: 'Provider key required' });
+    try {
+        const config = readConfigSafe();
+        const providerCfg = config?.models?.providers?.[provider];
+        const models = Array.isArray(providerCfg?.models) ? providerCfg.models : [];
+        return res.json({ provider, models });
+    } catch (error) {
+        return res.status(500).json({ error: error.message });
+    }
+});
+
+app.post('/api/providers/custom', (req, res) => {
+    const { key, label, baseUrl, api, authHeader, headers, models } = req.body || {};
+    if (!key || !baseUrl || !api) {
+        return res.status(400).json({ error: 'key, baseUrl, and api are required' });
+    }
+    try {
+        const config = readConfigSafe();
+        if (!config.models) config.models = {};
+        if (!config.models.providers) config.models.providers = {};
+        config.models.providers[key] = {
+            label: label || key,
+            baseUrl,
+            api,
+            ...(authHeader ? { authHeader } : {}),
+            ...(headers ? { headers } : {}),
+            models: Array.isArray(models) ? models : []
+        };
+        writeJson(OPENCLAW_CONFIG_PATH, config);
+        return res.json({ ok: true });
+    } catch (error) {
+        return res.status(500).json({ error: error.message });
     }
 });
 

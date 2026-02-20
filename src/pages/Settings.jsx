@@ -48,31 +48,53 @@ const PROVIDERS = [
 ];
 
 const ModelsTab = () => {
-    const [models, setModels] = useState([]);
-    const [currentModel, setCurrentModel] = useState('');
-    const [selectedModel, setSelectedModel] = useState('');
-    const [selectedProvider, setSelectedProvider] = useState(PROVIDERS[0].key);
-    const [providerToken, setProviderToken] = useState('');
+    const [providerCatalog, setProviderCatalog] = useState([]);
+    const [providerKey, setProviderKey] = useState('openai');
+    const [authMethod, setAuthMethod] = useState('api_key');
+    const [token, setToken] = useState('');
     const [tokenExpiry, setTokenExpiry] = useState('');
-    const [providerList, setProviderList] = useState([]);
-    const [activeProvider, setActiveProvider] = useState('');
-    const [providerJson, setProviderJson] = useState('');
+    const [models, setModels] = useState([]);
+    const [enabledModels, setEnabledModels] = useState([]);
+    const [primaryModel, setPrimaryModel] = useState('');
+    const [fallbacks, setFallbacks] = useState([]);
+    const [manualModel, setManualModel] = useState('');
+    const [customKey, setCustomKey] = useState('custom_provider');
+    const [customLabel, setCustomLabel] = useState('Custom Provider');
+    const [customBaseUrl, setCustomBaseUrl] = useState('');
+    const [customApi, setCustomApi] = useState('openai');
+    const [customAuthHeader, setCustomAuthHeader] = useState('Authorization');
+    const [customHeadersJson, setCustomHeadersJson] = useState('');
+    const [customModels, setCustomModels] = useState('');
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState('');
     const [status, setStatus] = useState('');
 
-    const loadModels = async () => {
-        setLoading(true);
-        setError('');
-        setStatus('');
+    const loadCatalog = async () => {
         try {
-            const response = await fetch(apiUrl('/api/models'));
-            if (!response.ok) throw new Error('Failed to load models');
+            const response = await fetch(apiUrl('/api/providers/catalog'));
+            if (!response.ok) return;
             const data = await response.json();
-            setModels(data.models || []);
-            setCurrentModel(data.currentModel || '');
-            setSelectedModel(data.currentModel || '');
+            const list = Array.isArray(data.providers) ? data.providers : [];
+            setProviderCatalog(list);
+            if (list.length && !list.find(p => p.key === providerKey)) {
+                setProviderKey(list[0].key);
+            }
+        } catch {
+            // ignore
+        }
+    };
+
+    const loadConfig = async () => {
+        setLoading(true);
+        try {
+            const response = await fetch(apiUrl('/api/models/config'));
+            if (!response.ok) throw new Error('Failed to load model config');
+            const data = await response.json();
+            const allowed = Array.isArray(data.allowedModels) ? data.allowedModels : [];
+            setEnabledModels(allowed);
+            setPrimaryModel(data.primary || '');
+            setFallbacks(Array.isArray(data.fallbacks) ? data.fallbacks : []);
         } catch (e) {
             setError(e.message);
         } finally {
@@ -80,73 +102,88 @@ const ModelsTab = () => {
         }
     };
 
-    const loadProviders = async () => {
+    const loadModels = async (nextProvider) => {
+        const provider = nextProvider || providerKey;
+        if (!provider || provider === 'custom') {
+            setModels([]);
+            return;
+        }
         try {
-            const response = await fetch(apiUrl('/api/providers'));
+            const response = await fetch(apiUrl(`/api/models/catalog?provider=${encodeURIComponent(provider)}`));
             if (!response.ok) return;
             const data = await response.json();
-            const list = Array.isArray(data.providers) ? data.providers : [];
-            setProviderList(list);
-            if (!activeProvider && list.length > 0) {
-                setActiveProvider(list[0]);
-                loadProvider(list[0]);
-            }
+            const list = Array.isArray(data.models) ? data.models : [];
+            setModels(list);
         } catch {
             // ignore
-        }
-    };
-
-    const loadProvider = async (name) => {
-        try {
-            const response = await fetch(apiUrl(`/api/provider?name=${encodeURIComponent(name)}`));
-            if (!response.ok) return;
-            const data = await response.json();
-            setProviderJson(JSON.stringify(data.provider || {}, null, 2));
-        } catch {
-            // ignore
-        }
-    };
-
-    const saveProvider = async () => {
-        try {
-            const parsed = JSON.parse(providerJson);
-            const response = await fetch(apiUrl(`/api/provider?name=${encodeURIComponent(activeProvider)}`), {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ provider: parsed })
-            });
-            if (!response.ok) {
-                const data = await response.json().catch(() => ({}));
-                throw new Error(data.error || 'Failed to save provider');
-            }
-            setStatus('Provider saved. Refresh models to see updates.');
-        } catch (e) {
-            setError(e.message);
         }
     };
 
     useEffect(() => {
-        loadModels();
-        loadProviders();
+        loadCatalog();
+        loadConfig();
     }, []);
 
-    const handleSave = async () => {
-        if (!selectedModel) return;
+    useEffect(() => {
+        loadModels(providerKey);
+        const provider = providerCatalog.find(p => p.key === providerKey);
+        if (provider?.authMethods?.length) {
+            setAuthMethod(provider.authMethods[0]);
+        }
+    }, [providerKey, providerCatalog]);
+
+    const normalizeModelKey = (provider, modelId) => {
+        if (!modelId) return '';
+        const trimmed = modelId.trim();
+        if (!trimmed) return '';
+        if (trimmed.includes('/')) return trimmed;
+        return `${provider}/${trimmed}`;
+    };
+
+    const toggleModel = (modelKey) => {
+        setEnabledModels(prev => {
+            if (prev.includes(modelKey)) {
+                const next = prev.filter(m => m !== modelKey);
+                if (primaryModel === modelKey) setPrimaryModel('');
+                setFallbacks(f => f.filter(m => m !== modelKey));
+                return next;
+            }
+            return [...prev, modelKey];
+        });
+    };
+
+    const addManualModel = () => {
+        const modelKey = normalizeModelKey(providerKey, manualModel);
+        if (!modelKey) return;
+        setEnabledModels(prev => (prev.includes(modelKey) ? prev : [...prev, modelKey]));
+        setManualModel('');
+    };
+
+    const handleSaveConfig = async () => {
         setSaving(true);
         setError('');
         setStatus('');
         try {
-            const response = await fetch(apiUrl('/api/model'), {
+            const allowed = Array.from(new Set([
+                ...enabledModels,
+                ...(primaryModel ? [primaryModel] : []),
+                ...fallbacks
+            ]));
+
+            const response = await fetch(apiUrl('/api/models/config'), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ model: selectedModel })
+                body: JSON.stringify({
+                    primary: primaryModel,
+                    fallbacks,
+                    allowedModels: allowed
+                })
             });
             if (!response.ok) {
                 const data = await response.json().catch(() => ({}));
-                throw new Error(data.error || 'Failed to update model');
+                throw new Error(data.error || 'Failed to save configuration');
             }
-            setCurrentModel(selectedModel);
-            setStatus('Model updated');
+            setStatus('Models configuration saved.');
         } catch (e) {
             setError(e.message);
         } finally {
@@ -154,7 +191,7 @@ const ModelsTab = () => {
         }
     };
 
-    const handleConnectProvider = async () => {
+    const handleSaveToken = async () => {
         setSaving(true);
         setError('');
         setStatus('');
@@ -168,17 +205,18 @@ const ModelsTab = () => {
                         : {})
                 },
                 body: JSON.stringify({
-                    provider: selectedProvider,
-                    token: providerToken,
+                    provider: providerKey,
+                    token,
                     ...(tokenExpiry ? { expiresIn: tokenExpiry } : {})
                 })
             });
             const data = await response.json().catch(() => ({}));
             if (!response.ok) {
-                throw new Error(data.error || 'Failed to connect provider');
+                throw new Error(data.error || 'Failed to save token');
             }
-            setStatus('Token saved. Refresh models to see new entries.');
-            setProviderToken('');
+            setStatus('Token saved.');
+            setToken('');
+            setTokenExpiry('');
         } catch (e) {
             setError(e.message);
         } finally {
@@ -186,143 +224,270 @@ const ModelsTab = () => {
         }
     };
 
-    const hasChanges = useMemo(
-        () => selectedModel && selectedModel !== currentModel,
-        [selectedModel, currentModel]
-    );
+    const handleSaveCustomProvider = async () => {
+        setSaving(true);
+        setError('');
+        setStatus('');
+        try {
+            let headers = undefined;
+            if (customHeadersJson.trim()) {
+                headers = JSON.parse(customHeadersJson);
+            }
+            const modelList = customModels
+                .split('\n')
+                .map(line => line.trim())
+                .filter(Boolean)
+                .map(id => ({ id }));
+
+            const response = await fetch(apiUrl('/api/providers/custom'), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    key: customKey,
+                    label: customLabel,
+                    baseUrl: customBaseUrl,
+                    api: customApi,
+                    authHeader: customAuthHeader,
+                    headers,
+                    models: modelList
+                })
+            });
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok) {
+                throw new Error(data.error || 'Failed to save custom provider');
+            }
+            setStatus('Custom provider saved.');
+            await loadCatalog();
+            await loadModels(customKey);
+            setProviderKey(customKey);
+        } catch (e) {
+            setError(e.message);
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    const availableModels = models.map(m => normalizeModelKey(providerKey, m.id || m.name || m.key || m));
+    const enabledForProvider = enabledModels.filter(m => m.startsWith(`${providerKey}/`));
 
     return (
-        <div>
-            <div className="flex items-center justify-between mb-4">
-                <h3 className="text-lg font-semibold text-gray-800">Active Model</h3>
-                <button
-                    onClick={loadModels}
-                    className="flex items-center gap-2 text-sm text-gray-600 hover:text-gray-800"
-                >
-                    <RefreshCw className="w-4 h-4" />
-                    Refresh
-                </button>
-            </div>
-
-            <div className="mb-4 grid grid-cols-1 md:grid-cols-4 gap-2">
+        <div className="space-y-6">
+            <div>
+                <h3 className="text-lg font-semibold text-gray-800 mb-2">1. Choose Provider</h3>
                 <select
-                    value={selectedProvider}
-                    onChange={(e) => setSelectedProvider(e.target.value)}
-                    className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                    value={providerKey}
+                    onChange={(e) => setProviderKey(e.target.value)}
+                    className="border border-gray-300 rounded-lg px-3 py-2 text-sm w-full md:w-1/2"
                 >
-                    {PROVIDERS.map((p) => (
-                        <option key={p.key} value={p.key}>{p.label}</option>
+                    {providerCatalog.map((provider) => (
+                        <option key={provider.key} value={provider.key}>
+                            {provider.label}
+                        </option>
                     ))}
                 </select>
-                <input
-                    type="password"
-                    value={providerToken}
-                    onChange={(e) => setProviderToken(e.target.value)}
-                    className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
-                    placeholder="Provider token"
-                />
-                <input
-                    type="text"
-                    value={tokenExpiry}
-                    onChange={(e) => setTokenExpiry(e.target.value)}
-                    className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
-                    placeholder="Expires in (e.g. 365d)"
-                />
-                <button
-                    type="button"
-                    onClick={handleConnectProvider}
-                    disabled={saving || !providerToken}
-                    className="px-4 py-2 bg-slate-900 text-white rounded-lg text-sm"
-                >
-                    Save Token
-                </button>
             </div>
 
-            {providerList.length > 0 && (
-                <div className="mb-6">
-                    <div className="text-sm font-semibold text-gray-700 mb-2">Provider Config (JSON)</div>
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mb-2">
+            <div>
+                <h3 className="text-lg font-semibold text-gray-800 mb-2">2. Authenticate</h3>
+                <div className="flex flex-wrap gap-2 mb-3">
+                    {(providerCatalog.find(p => p.key === providerKey)?.authMethods || ['api_key']).map((method) => (
+                        <button
+                            key={method}
+                            type="button"
+                            onClick={() => setAuthMethod(method)}
+                            className={`px-3 py-1.5 rounded-full text-xs font-semibold border ${authMethod === method ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-gray-200 text-gray-600'}`}
+                        >
+                            {method === 'api_key' && 'API Key'}
+                            {method === 'oauth' && 'OAuth'}
+                            {method === 'paste_token' && 'Paste Token'}
+                        </button>
+                    ))}
+                </div>
+
+                {authMethod === 'api_key' || authMethod === 'paste_token' ? (
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                        <input
+                            type="password"
+                            value={token}
+                            onChange={(e) => setToken(e.target.value)}
+                            className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                            placeholder="Provider token"
+                        />
+                        <input
+                            type="text"
+                            value={tokenExpiry}
+                            onChange={(e) => setTokenExpiry(e.target.value)}
+                            className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                            placeholder="Expires in (e.g. 365d)"
+                        />
+                        <button
+                            type="button"
+                            onClick={handleSaveToken}
+                            disabled={saving || !token}
+                            className="px-4 py-2 bg-slate-900 text-white rounded-lg text-sm"
+                        >
+                            Save Token
+                        </button>
+                    </div>
+                ) : (
+                    <div className="text-sm text-gray-600 bg-gray-50 border border-gray-200 rounded-lg p-3">
+                        OAuth requires running OpenClaw auth on the server. Run:
+                        <div className="font-mono text-xs mt-2">openclaw models auth login --provider {providerKey}</div>
+                    </div>
+                )}
+            </div>
+
+            {providerKey === 'custom' && (
+                <div>
+                    <h3 className="text-lg font-semibold text-gray-800 mb-2">3. Custom Provider Config</h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <input
+                            type="text"
+                            value={customKey}
+                            onChange={(e) => setCustomKey(e.target.value)}
+                            className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                            placeholder="Provider key (e.g. custom_openai)"
+                        />
+                        <input
+                            type="text"
+                            value={customLabel}
+                            onChange={(e) => setCustomLabel(e.target.value)}
+                            className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                            placeholder="Provider label"
+                        />
+                        <input
+                            type="text"
+                            value={customBaseUrl}
+                            onChange={(e) => setCustomBaseUrl(e.target.value)}
+                            className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                            placeholder="Base URL"
+                        />
                         <select
-                            value={activeProvider}
-                            onChange={(e) => {
-                                const next = e.target.value;
-                                setActiveProvider(next);
-                                loadProvider(next);
-                            }}
+                            value={customApi}
+                            onChange={(e) => setCustomApi(e.target.value)}
                             className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
                         >
-                            {providerList.map((p) => (
-                                <option key={p} value={p}>{p}</option>
-                            ))}
+                            <option value="openai">OpenAI-compatible</option>
+                            <option value="anthropic">Anthropic-compatible</option>
+                            <option value="google">Google/Gemini-compatible</option>
                         </select>
-                        <button
-                            type="button"
-                            onClick={() => loadProvider(activeProvider)}
-                            className="px-4 py-2 bg-gray-100 rounded-lg text-sm"
-                        >
-                            Reload
-                        </button>
-                        <button
-                            type="button"
-                            onClick={saveProvider}
-                            className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm"
-                        >
-                            Save Provider
-                        </button>
+                        <input
+                            type="text"
+                            value={customAuthHeader}
+                            onChange={(e) => setCustomAuthHeader(e.target.value)}
+                            className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                            placeholder="Auth header (default: Authorization)"
+                        />
+                        <textarea
+                            value={customHeadersJson}
+                            onChange={(e) => setCustomHeadersJson(e.target.value)}
+                            rows={3}
+                            className="border border-gray-300 rounded-lg px-3 py-2 text-xs font-mono"
+                            placeholder="Additional headers JSON (optional)"
+                        />
+                        <textarea
+                            value={customModels}
+                            onChange={(e) => setCustomModels(e.target.value)}
+                            rows={4}
+                            className="border border-gray-300 rounded-lg px-3 py-2 text-xs font-mono md:col-span-2"
+                            placeholder="Model IDs, one per line"
+                        />
                     </div>
-                    <textarea
-                        value={providerJson}
-                        onChange={(e) => setProviderJson(e.target.value)}
-                        rows={10}
-                        className="w-full border border-gray-300 rounded-lg p-3 font-mono text-xs"
-                        placeholder="Provider JSON config..."
-                    />
+                    <button
+                        type="button"
+                        onClick={handleSaveCustomProvider}
+                        className="mt-3 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm"
+                        disabled={saving || !customKey || !customBaseUrl}
+                    >
+                        Save Custom Provider
+                    </button>
                 </div>
             )}
 
-            {loading ? (
-                <div className="text-gray-500 text-sm">Loading models...</div>
-            ) : (
-                <div className="space-y-3">
-                    <select
-                        className="w-full border border-gray-300 rounded-lg px-3 py-2"
-                        value={selectedModel}
-                        onChange={(e) => setSelectedModel(e.target.value)}
+            <div>
+                <h3 className="text-lg font-semibold text-gray-800 mb-2">{providerKey === 'custom' ? '4' : '3'}. Enable Models</h3>
+                <div className="flex flex-wrap gap-2 mb-3">
+                    {availableModels.length === 0 && (
+                        <div className="text-sm text-gray-500">No models listed yet. Add models manually.</div>
+                    )}
+                    {availableModels.map((modelKey) => (
+                        <button
+                            key={modelKey}
+                            type="button"
+                            onClick={() => toggleModel(modelKey)}
+                            className={`px-3 py-1.5 rounded-full text-xs font-semibold border ${enabledModels.includes(modelKey) ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-gray-200 text-gray-600'}`}
+                        >
+                            {modelKey}
+                        </button>
+                    ))}
+                </div>
+                <div className="flex gap-2 mb-3">
+                    <input
+                        type="text"
+                        value={manualModel}
+                        onChange={(e) => setManualModel(e.target.value)}
+                        className="border border-gray-300 rounded-lg px-3 py-2 text-sm flex-1"
+                        placeholder="Add model ID (e.g. gpt-4.1)"
+                    />
+                    <button
+                        type="button"
+                        onClick={addManualModel}
+                        className="px-4 py-2 bg-gray-100 rounded-lg text-sm"
                     >
-                        <option value="">Select a model...</option>
-                        {models.map(model => (
-                            <option key={model.key || model.name} value={model.key || model.name}>
-                                {model.name || model.key}
-                            </option>
+                        Add
+                    </button>
+                </div>
+                <div className="text-xs text-gray-500">Enabled for provider: {enabledForProvider.length}</div>
+            </div>
+
+            <div>
+                <h3 className="text-lg font-semibold text-gray-800 mb-2">{providerKey === 'custom' ? '5' : '4'}. Primary + Fallbacks</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <select
+                        value={primaryModel}
+                        onChange={(e) => setPrimaryModel(e.target.value)}
+                        className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                    >
+                        <option value="">Select primary model</option>
+                        {enabledModels.map((modelKey) => (
+                            <option key={modelKey} value={modelKey}>{modelKey}</option>
                         ))}
                     </select>
-
-                    <div className="text-xs text-gray-500">
-                        Current: <span className="font-mono">{currentModel || 'unknown'}</span>
-                    </div>
+                    <select
+                        multiple
+                        value={fallbacks}
+                        onChange={(e) => {
+                            const values = Array.from(e.target.selectedOptions).map(o => o.value);
+                            setFallbacks(values);
+                        }}
+                        className="border border-gray-300 rounded-lg px-3 py-2 text-sm h-28"
+                    >
+                        {enabledModels.filter(m => m !== primaryModel).map((modelKey) => (
+                            <option key={modelKey} value={modelKey}>{modelKey}</option>
+                        ))}
+                    </select>
                 </div>
-            )}
+                <div className="text-xs text-gray-500 mt-2">Hold Ctrl/Cmd to select multiple fallbacks.</div>
+            </div>
 
-            {error && (
-                <div className="mt-3 text-sm text-red-600">{error}</div>
-            )}
-            {status && (
-                <div className="mt-3 text-sm text-green-600">{status}</div>
-            )}
+            {error && <div className="text-sm text-red-600">{error}</div>}
+            {status && <div className="text-sm text-green-600">{status}</div>}
 
-            <div className="mt-4">
+            <div>
                 <button
-                    onClick={handleSave}
-                    disabled={!hasChanges || saving}
+                    type="button"
+                    onClick={handleSaveConfig}
+                    disabled={saving || !primaryModel}
                     className="px-4 py-2 bg-blue-600 text-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                 >
                     <Save className="w-4 h-4" />
-                    {saving ? 'Saving...' : 'Save'}
+                    {saving ? 'Saving...' : 'Save Configuration'}
                 </button>
             </div>
         </div>
     );
 };
+
 
 const SoulTab = () => {
     const [content, setContent] = useState('');
