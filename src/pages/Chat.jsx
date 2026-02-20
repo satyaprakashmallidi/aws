@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { apiUrl } from '../lib/apiBase';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Send, Bot, User, Loader2, RefreshCw, Trash2 } from 'lucide-react';
+import { Send, Bot, User, Loader2, RefreshCw, Trash2, ChevronDown, Plus } from 'lucide-react';
 
 const getOrCreateSessionKey = (agentId) => {
     const storageKey = `openclaw.session.${agentId}`;
@@ -41,6 +41,9 @@ const Chat = () => {
     const [loading, setLoading] = useState(true);
     const [agentId, setAgentId] = useState('main'); // Default to main agent
     const [sessionKey, setSessionKey] = useState('');
+    const [sessions, setSessions] = useState([]);
+    const [sessionsLoading, setSessionsLoading] = useState(false);
+    const [errorMessage, setErrorMessage] = useState('');
     const messagesEndRef = useRef(null);
 
     useEffect(() => {
@@ -53,6 +56,10 @@ const Chat = () => {
             fetchHistory();
         }
     }, [agentId, sessionKey]);
+
+    useEffect(() => {
+        fetchSessions();
+    }, [agentId]);
 
     useEffect(() => {
         scrollToBottom();
@@ -92,6 +99,58 @@ const Chat = () => {
         }
     };
 
+    const fetchSessions = async () => {
+        setSessionsLoading(true);
+        try {
+            const response = await fetch(apiUrl('/api/chat?action=sessions'));
+            if (response.ok) {
+                const data = await response.json();
+                const list = data.sessions || data?.result?.details?.sessions || [];
+                setSessions(list);
+            }
+        } catch (error) {
+            console.error('Failed to fetch sessions:', error);
+        } finally {
+            setSessionsLoading(false);
+        }
+    };
+
+    const setSessionKeyPersisted = (key) => {
+        if (!key) return;
+        try {
+            localStorage.setItem(`openclaw.session.${agentId}`, key);
+        } catch {
+            // Ignore storage errors
+        }
+        setSessionKey(key);
+    };
+
+    const createNewSession = () => {
+        const uuid = (typeof crypto !== 'undefined' && crypto.randomUUID)
+            ? crypto.randomUUID()
+            : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        const key = `agent:${agentId}:${uuid}`;
+        setSessionKeyPersisted(key);
+        setMessages([]);
+    };
+
+    const getSessionLabel = (session) => {
+        const raw = session?.name
+            || session?.title
+            || session?.key
+            || session?.sessionKey
+            || session?.id
+            || '';
+        if (!raw) return '';
+        return raw.length > 42 ? `${raw.slice(0, 20)}…${raw.slice(-18)}` : raw;
+    };
+
+    const currentSessionLabel = () => {
+        if (!sessionKey) return 'No session';
+        const match = sessions.find(s => (s?.key || s?.sessionKey || s?.id) === sessionKey);
+        return getSessionLabel(match) || (sessionKey.length > 42 ? `${sessionKey.slice(0, 20)}…${sessionKey.slice(-18)}` : sessionKey);
+    };
+
     const handleSend = async (e) => {
         e.preventDefault();
         if (!input.trim() || sending) return;
@@ -110,6 +169,7 @@ const Chat = () => {
         });
         setInput('');
         setSending(true);
+        setErrorMessage('');
 
         try {
             const response = await fetch(apiUrl('/api/chat'), {
@@ -201,7 +261,13 @@ const Chat = () => {
             }
         } catch (error) {
             console.error('Failed to send message:', error);
-            // Verify if we should show error to user
+            const message = error?.message || 'Request failed. Please try again.';
+            setErrorMessage(message);
+            setMessages(prev => {
+                const next = [...prev, { role: 'error', content: message, timestamp: new Date().toISOString() }];
+                setLocalHistory(sessionKey, next);
+                return next;
+            });
         } finally {
             setSending(false);
         }
@@ -230,7 +296,34 @@ const Chat = () => {
                     </div>
                 </div>
 
-                <div className="flex gap-2">
+                <div className="flex items-center gap-2">
+                    <div className="relative">
+                        <select
+                            value={sessionKey}
+                            onChange={(e) => setSessionKeyPersisted(e.target.value)}
+                            className="appearance-none bg-white border border-gray-200 rounded-lg px-3 py-2 pr-9 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 min-w-[220px]"
+                            disabled={sessionsLoading}
+                        >
+                            <option value={sessionKey}>{currentSessionLabel()}</option>
+                            {sessions.map((session) => {
+                                const value = session?.key || session?.sessionKey || session?.id || '';
+                                if (!value || value === sessionKey) return null;
+                                return (
+                                    <option key={value} value={value}>
+                                        {getSessionLabel(session)}
+                                    </option>
+                                );
+                            })}
+                        </select>
+                        <ChevronDown className="w-4 h-4 text-gray-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    </div>
+                    <button
+                        onClick={createNewSession}
+                        className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-colors"
+                        title="New Session"
+                    >
+                        <Plus className="w-5 h-5" />
+                    </button>
                     <button
                         onClick={fetchHistory}
                         className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-colors"
@@ -250,6 +343,11 @@ const Chat = () => {
 
             {/* Messages Area */}
             <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-50/50">
+                {errorMessage && (
+                    <div className="bg-red-50 border border-red-200 text-red-700 px-3 py-2 rounded-md text-sm">
+                        {errorMessage}
+                    </div>
+                )}
                 {loading ? (
                     <div className="flex items-center justify-center h-full text-gray-400">
                         <Loader2 className="w-8 h-8 animate-spin" />
@@ -270,11 +368,18 @@ const Chat = () => {
                                     <Bot className="w-5 h-5" />
                                 </div>
                             )}
+                            {msg.role === 'error' && (
+                                <div className="w-8 h-8 rounded-full bg-red-100 flex items-center justify-center text-red-600 flex-shrink-0 mt-1">
+                                    <Bot className="w-5 h-5" />
+                                </div>
+                            )}
 
                             <div
                                 className={`max-w-[70%] p-3 rounded-lg shadow-sm text-sm ${msg.role === 'user'
                                     ? 'bg-blue-600 text-white rounded-tr-none whitespace-pre-wrap'
-                                    : 'bg-white text-gray-800 border border-gray-100 rounded-tl-none'
+                                    : msg.role === 'error'
+                                        ? 'bg-red-50 text-red-700 border border-red-200 rounded-tl-none'
+                                        : 'bg-white text-gray-800 border border-gray-100 rounded-tl-none'
                                     }`}
                             >
                                 {msg.role === 'assistant' ? (

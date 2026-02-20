@@ -38,6 +38,15 @@ function readJson(filePath) {
 }
 
 function writeJson(filePath, data) {
+    // Strip legacy keys no longer accepted by OpenClaw.
+    if (data && typeof data === 'object') {
+        if (data.identity !== undefined) {
+            delete data.identity;
+        }
+        if (data.agents?.defaults?.description !== undefined) {
+            delete data.agents.defaults.description;
+        }
+    }
     fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
 }
 
@@ -73,6 +82,22 @@ function safeWorkspacePath(name) {
     const normalized = name.replace(/\\/g, '/').trim();
     if (normalized.startsWith('/') || normalized.includes('..')) return null;
     return path.join(WORKSPACE_DIR, normalized);
+}
+
+function getAgentEntry(config, agentId) {
+    const list = Array.isArray(config?.agents?.list) ? config.agents.list : [];
+    return list.find(agent => agent?.id === agentId) || null;
+}
+
+function upsertAgentEntry(config, agentId) {
+    if (!config.agents) config.agents = {};
+    if (!Array.isArray(config.agents.list)) config.agents.list = [];
+    let entry = config.agents.list.find(agent => agent?.id === agentId);
+    if (!entry) {
+        entry = { id: agentId };
+        config.agents.list.push(entry);
+    }
+    return entry;
 }
 
 async function invokeTool(tool, args = {}) {
@@ -377,10 +402,11 @@ app.get('/api/agents', async (req, res) => {
         }
         if (id) {
             const config = readJson(OPENCLAW_CONFIG_PATH);
-            const identity = config.identity || { name: 'OpenClaw', emoji: '🦞' };
+            const agentEntry = getAgentEntry(config, id);
+            const identity = agentEntry?.identity || config.identity || { name: 'OpenClaw', emoji: '🦞' };
             return res.json({
                 id,
-                description: config.agents?.defaults?.description || '',
+                description: agentEntry?.description || '',
                 model: config.agents?.defaults?.model?.primary || '',
                 identity,
                 workspace: config.agents?.defaults?.workspace || WORKSPACE_DIR,
@@ -393,14 +419,12 @@ app.get('/api/agents', async (req, res) => {
         const details = response?.result?.details || {};
         const agents = details.agents || response.agents || [];
         const config = readJson(OPENCLAW_CONFIG_PATH);
-        const identity = config.identity || { name: 'OpenClaw', emoji: '🦞' };
-        const description = config.agents?.defaults?.description || '';
         const model = config.agents?.defaults?.model?.primary || '';
 
         const enriched = agents.map(agent => ({
             ...agent,
-            identity,
-            description,
+            identity: getAgentEntry(config, agent?.id)?.identity || config.identity || { name: 'OpenClaw', emoji: '🦞' },
+            description: getAgentEntry(config, agent?.id)?.description || '',
             model
         }));
 
@@ -418,20 +442,24 @@ app.patch('/api/agents', (req, res) => {
         const config = readJson(OPENCLAW_CONFIG_PATH);
         if (!config.agents) config.agents = {};
         if (!config.agents.defaults) config.agents.defaults = {};
-        if (!config.identity) config.identity = { name: 'OpenClaw', emoji: '🦞' };
 
         if (updates.description !== undefined) {
-            config.agents.defaults.description = updates.description;
+            const entry = upsertAgentEntry(config, id);
+            entry.description = updates.description;
         }
         if (updates.model) {
             if (!config.agents.defaults.model) config.agents.defaults.model = {};
             config.agents.defaults.model.primary = updates.model;
         }
         if (updates.identity?.name !== undefined) {
-            config.identity.name = updates.identity.name;
+            const entry = upsertAgentEntry(config, id);
+            entry.identity = entry.identity || {};
+            entry.identity.name = updates.identity.name;
         }
         if (updates.identity?.emoji !== undefined) {
-            config.identity.emoji = updates.identity.emoji;
+            const entry = upsertAgentEntry(config, id);
+            entry.identity = entry.identity || {};
+            entry.identity.emoji = updates.identity.emoji;
         }
 
         writeJson(OPENCLAW_CONFIG_PATH, config);
@@ -480,8 +508,22 @@ app.post('/api/chat', async (req, res) => {
 
 app.get('/api/chat', async (req, res) => {
     const { action, sessionKey, limit, includeTools } = req.query;
-    if (action !== 'history') return res.status(400).json({ error: 'Invalid action' });
+    if (action !== 'history' && action !== 'sessions') return res.status(400).json({ error: 'Invalid action' });
     try {
+        if (action === 'sessions') {
+            const response = await invokeTool('sessions_list', {
+                kinds: ['main', 'group', 'cron'],
+                limit: limit ? parseInt(limit, 10) : 100,
+                activeMinutes: 1440,
+                messageLimit: 3
+            });
+            const details = response?.result?.details || {};
+            return res.json({
+                sessions: details.sessions || response.sessions || [],
+                total: details.count || response.total || 0
+            });
+        }
+
         const response = await invokeTool('sessions_history', {
             sessionKey,
             limit: limit ? parseInt(limit, 10) : 50,
