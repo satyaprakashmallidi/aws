@@ -2,7 +2,7 @@
 import { apiUrl } from '../lib/apiBase';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Send, Bot, User, Loader2, RefreshCw, ChevronDown, Plus } from 'lucide-react';
+import { Send, Bot, User, Loader2, RefreshCw, ChevronDown, Plus, Wrench } from 'lucide-react';
 
 const getOrCreateSessionKey = (agentId) => {
     const storageKey = `openclaw.session.${agentId}`;
@@ -36,6 +36,55 @@ const normalizeContent = (content) => {
     }
     if (typeof content === 'object') return JSON.stringify(content, null, 2);
     return String(content);
+};
+
+const asJsonCodeBlock = (value) => {
+    if (value === undefined || value === null) return '';
+    if (typeof value === 'string') return value;
+    return `\n\n\`\`\`json\n${JSON.stringify(value, null, 2)}\n\`\`\`\n`;
+};
+
+const extractToolCalls = (msg) => {
+    const raw = msg?.tool_calls || msg?.toolCalls || msg?.toolCallsV1 || [];
+    if (!Array.isArray(raw) || raw.length === 0) return '';
+
+    return raw.map((call) => {
+        const fn = call?.function || call?.fn || {};
+        const name = fn?.name || call?.name || call?.tool || call?.id || 'tool';
+        const args = fn?.arguments ?? call?.arguments;
+        const argsPretty = (() => {
+            if (args === undefined || args === null || args === '') return '';
+            if (typeof args === 'string') return args;
+            return JSON.stringify(args, null, 2);
+        })();
+        return `**Tool call:** ${name}${argsPretty ? `\n\n\`\`\`json\n${argsPretty}\n\`\`\`` : ''}`;
+    }).join('\n\n');
+};
+
+const toFriendlyChatError = (raw) => {
+    const text = (raw ?? '').toString();
+    const lower = text.toLowerCase();
+
+    if (
+        lower.includes('context_length_exceeded')
+        || lower.includes('maximum context')
+        || lower.includes('context length')
+        || lower.includes('too many tokens')
+        || lower.includes('token limit')
+        || lower.includes('request too large')
+    ) {
+        return 'Token/context limit exceeded. Start a new session or reduce the amount of history/context.';
+    }
+
+    if (lower.includes('rate limit') || lower.includes('too many requests') || lower.includes('429')) {
+        return 'Rate limit hit. Please wait a moment and try again.';
+    }
+
+    if (lower.includes('insufficient_quota') || lower.includes('quota')) {
+        return 'Quota exceeded for this provider/model.';
+    }
+
+    return text || 'Request failed. Please try again.';
 };
 
 const getSessionKeyValue = (session) => session?.sessionKey || session?.key || session?.id || '';
@@ -90,18 +139,41 @@ const Chat = () => {
         setLoading(true);
         setErrorMessage('');
         try {
-            const url = apiUrl(`/api/chat?action=history&sessionKey=${encodeURIComponent(targetKey)}&limit=100`);
+            const url = apiUrl(`/api/chat?action=history&sessionKey=${encodeURIComponent(targetKey)}&limit=100&includeTools=true`);
             const response = await fetch(url);
             if (!response.ok) throw new Error('Failed to load chat history');
             const data = await response.json();
             const list = Array.isArray(data.messages) ? data.messages : [];
-            const normalized = list
-                .filter(msg => msg?.role !== 'tool')
-                .map((msg) => ({
-                    role: msg.role === 'user' ? 'user' : 'assistant',
-                    content: normalizeContent(msg.content),
-                    timestamp: msg.timestamp || msg.createdAt || new Date().toISOString()
-                }));
+
+            const normalized = list.map((msg) => {
+                const role = msg?.role || 'assistant';
+                const timestamp = msg?.timestamp || msg?.createdAt || new Date().toISOString();
+
+                if (role === 'tool') {
+                    const name = msg?.name || msg?.tool?.name || msg?.toolName || 'tool';
+                    const body = msg?.content ?? msg?.output ?? msg?.result ?? '';
+                    const content = `**Tool:** ${name}${asJsonCodeBlock(body) || `\n\n${normalizeContent(body)}`}`.trim();
+                    return { role: 'tool', content, timestamp };
+                }
+
+                const contentText = normalizeContent(msg?.content);
+                const toolCallsText = extractToolCalls(msg);
+
+                // OpenAI-style tool calling: assistant message may have empty content but tool_calls populated.
+                if (!contentText && toolCallsText) {
+                    return { role: 'tool', content: toolCallsText, timestamp };
+                }
+
+                if (!contentText) {
+                    return { role: role === 'user' ? 'user' : 'assistant', content: '(empty message)', timestamp };
+                }
+
+                return {
+                    role: role === 'user' ? 'user' : 'assistant',
+                    content: contentText,
+                    timestamp
+                };
+            });
             setMessages(normalized);
         } catch (error) {
             console.error('Failed to fetch history:', error);
@@ -178,13 +250,24 @@ const Chat = () => {
 
             if (!response.ok) {
                 const errorText = await response.text();
-                throw new Error(errorText || `Request failed with status ${response.status}`);
+                let parsed = errorText;
+                try {
+                    if (errorText && errorText.trim().startsWith('{')) {
+                        parsed = JSON.parse(errorText);
+                    }
+                } catch {
+                    // ignore
+                }
+                const rawMessage = parsed?.error?.message || parsed?.message || errorText || `Request failed with status ${response.status}`;
+                throw new Error(toFriendlyChatError(rawMessage));
             }
 
             const reader = response.body?.getReader();
             if (!reader) {
                 const data = await response.json();
-                const content = data.choices?.[0]?.message?.content;
+                const choice = data.choices?.[0];
+                const content = choice?.message?.content;
+                const finishReason = choice?.finish_reason;
                 if (content) {
                     const botMessage = {
                         role: 'assistant',
@@ -195,11 +278,19 @@ const Chat = () => {
                         const next = [...prev, botMessage];
                         return next;
                     });
+                } else {
+                    const hint = finishReason === 'length'
+                        ? 'Token/context limit exceeded. Start a new session or reduce the amount of history/context.'
+                        : 'No response content received.';
+                    setErrorMessage(hint);
+                    setMessages(prev => ([...prev, { role: 'error', content: hint, timestamp: new Date().toISOString() }]));
                 }
                 return;
             }
 
             let assistantIndex = null;
+            let assistantText = '';
+            let finishReason = null;
             const decoder = new TextDecoder('utf-8');
             let buffer = '';
 
@@ -229,12 +320,19 @@ const Chat = () => {
                     }
                     try {
                         const payload = JSON.parse(dataStr);
+                        if (payload?.error) {
+                            const raw = payload.error?.message || JSON.stringify(payload.error);
+                            throw new Error(toFriendlyChatError(raw));
+                        }
+                        const fr = payload?.choices?.[0]?.finish_reason;
+                        if (fr) finishReason = fr;
                         const delta = payload?.choices?.[0]?.delta?.content
                             ?? payload?.choices?.[0]?.message?.content
                             ?? '';
                         if (!delta) continue;
 
                         ensureAssistantMessage();
+                        assistantText += normalizeContent(delta);
                         setMessages(prev => {
                             const next = [...prev];
                             const current = next[assistantIndex];
@@ -249,9 +347,17 @@ const Chat = () => {
                     }
                 }
             }
+
+            if (!assistantText.trim()) {
+                const hint = finishReason === 'length'
+                    ? 'Token/context limit exceeded. Start a new session or reduce the amount of history/context.'
+                    : 'No response content received.';
+                setErrorMessage(hint);
+                setMessages(prev => ([...prev, { role: 'error', content: hint, timestamp: new Date().toISOString() }]));
+            }
         } catch (error) {
             console.error('Failed to send message:', error);
-            const message = error?.message || 'Request failed. Please try again.';
+            const message = toFriendlyChatError(error?.message);
             setErrorMessage(message);
             setMessages(prev => {
                 const next = [...prev, { role: 'error', content: message, timestamp: new Date().toISOString() }];
@@ -354,6 +460,11 @@ const Chat = () => {
                                     <Bot className="w-5 h-5" />
                                 </div>
                             )}
+                            {msg.role === 'tool' && (
+                                <div className="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center text-slate-700 flex-shrink-0 mt-1">
+                                    <Wrench className="w-5 h-5" />
+                                </div>
+                            )}
                             {msg.role === 'error' && (
                                 <div className="w-8 h-8 rounded-full bg-red-100 flex items-center justify-center text-red-600 flex-shrink-0 mt-1">
                                     <Bot className="w-5 h-5" />
@@ -365,10 +476,12 @@ const Chat = () => {
                                     ? 'bg-blue-600 text-white rounded-tr-none whitespace-pre-wrap'
                                     : msg.role === 'error'
                                         ? 'bg-red-50 text-red-700 border border-red-200 rounded-tl-none'
-                                        : 'bg-white text-gray-800 border border-gray-100 rounded-tl-none'
+                                        : msg.role === 'tool'
+                                            ? 'bg-slate-100 text-slate-800 border border-slate-200 rounded-tl-none'
+                                            : 'bg-white text-gray-800 border border-gray-100 rounded-tl-none'
                                     }`}
                             >
-                                {msg.role === 'assistant' ? (
+                                {msg.role === 'assistant' || msg.role === 'tool' ? (
                                     <ReactMarkdown
                                         remarkPlugins={[remarkGfm]}
                                         components={{
