@@ -392,6 +392,17 @@ app.get('/api/models/catalog', (req, res) => {
     }
 });
 
+app.get('/api/models/gateway', async (req, res) => {
+    try {
+        const response = await invokeTool('models_list', {});
+        const details = response?.result?.details || {};
+        const models = response?.models || details.models || [];
+        return res.json({ models });
+    } catch (error) {
+        return res.status(500).json({ error: error.message });
+    }
+});
+
 app.post('/api/providers/custom', (req, res) => {
     const { key, label, baseUrl, api, authHeader, headers, models } = req.body || {};
     if (!key || !baseUrl || !api) {

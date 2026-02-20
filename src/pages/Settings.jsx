@@ -54,6 +54,8 @@ const ModelsTab = () => {
     const [token, setToken] = useState('');
     const [tokenExpiry, setTokenExpiry] = useState('');
     const [models, setModels] = useState([]);
+    const [gatewayModels, setGatewayModels] = useState([]);
+    const [modelSearch, setModelSearch] = useState('');
     const [enabledModels, setEnabledModels] = useState([]);
     const [primaryModel, setPrimaryModel] = useState('');
     const [fallbacks, setFallbacks] = useState([]);
@@ -80,6 +82,18 @@ const ModelsTab = () => {
             if (list.length && !list.find(p => p.key === providerKey)) {
                 setProviderKey(list[0].key);
             }
+        } catch {
+            // ignore
+        }
+    };
+
+    const loadGatewayModels = async () => {
+        try {
+            const response = await fetch(apiUrl('/api/models/gateway'));
+            if (!response.ok) return;
+            const data = await response.json();
+            const list = Array.isArray(data.models) ? data.models : [];
+            setGatewayModels(list);
         } catch {
             // ignore
         }
@@ -122,6 +136,7 @@ const ModelsTab = () => {
     useEffect(() => {
         loadCatalog();
         loadConfig();
+        loadGatewayModels();
     }, []);
 
     useEffect(() => {
@@ -134,10 +149,16 @@ const ModelsTab = () => {
 
     const normalizeModelKey = (provider, modelId) => {
         if (!modelId) return '';
-        const trimmed = modelId.trim();
+        const trimmed = String(modelId).trim();
         if (!trimmed) return '';
         if (trimmed.includes('/')) return trimmed;
         return `${provider}/${trimmed}`;
+    };
+
+    const resolveModelKey = (model) => {
+        if (!model) return '';
+        if (typeof model === 'string') return model;
+        return model.key || model.id || model.name || '';
     };
 
     const toggleModel = (modelKey) => {
@@ -217,6 +238,7 @@ const ModelsTab = () => {
             setStatus('Token saved.');
             setToken('');
             setTokenExpiry('');
+            loadGatewayModels();
         } catch (e) {
             setError(e.message);
         } finally {
@@ -267,7 +289,16 @@ const ModelsTab = () => {
         }
     };
 
-    const availableModels = models.map(m => normalizeModelKey(providerKey, m.id || m.name || m.key || m));
+    const providerModels = models.map(m => normalizeModelKey(providerKey, resolveModelKey(m)));
+    const gatewayList = gatewayModels
+        .map(m => resolveModelKey(m))
+        .filter(Boolean)
+        .map(m => (m.includes('/') ? m : normalizeModelKey(providerKey, m)));
+    const combined = Array.from(new Set([...providerModels, ...gatewayList]));
+    const search = modelSearch.trim().toLowerCase();
+    const filteredModels = search
+        ? combined.filter(modelKey => modelKey.toLowerCase().includes(search))
+        : combined;
     const enabledForProvider = enabledModels.filter(m => m.startsWith(`${providerKey}/`));
 
     return (
@@ -406,11 +437,18 @@ const ModelsTab = () => {
 
             <div>
                 <h3 className="text-lg font-semibold text-gray-800 mb-2">{providerKey === 'custom' ? '4' : '3'}. Enable Models</h3>
-                <div className="flex flex-wrap gap-2 mb-3">
-                    {availableModels.length === 0 && (
-                        <div className="text-sm text-gray-500">No models listed yet. Add models manually.</div>
+                <input
+                    type="text"
+                    value={modelSearch}
+                    onChange={(e) => setModelSearch(e.target.value)}
+                    className="border border-gray-300 rounded-lg px-3 py-2 text-sm w-full md:w-1/2 mb-3"
+                    placeholder="Search models..."
+                />
+                <div className="flex flex-wrap gap-2 mb-3 max-h-64 overflow-y-auto border border-gray-200 rounded-lg p-3">
+                    {filteredModels.length === 0 && (
+                        <div className="text-sm text-gray-500">No models found. Add models manually.</div>
                     )}
-                    {availableModels.map((modelKey) => (
+                    {filteredModels.map((modelKey) => (
                         <button
                             key={modelKey}
                             type="button"
