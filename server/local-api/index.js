@@ -61,6 +61,76 @@ const PROVIDER_CATALOG = [
 
 const OAUTH_SESSIONS = new Map();
 
+function requireApiSecret(req, res) {
+    if (!LOCAL_API_SECRET) {
+        res.status(500).json({ error: 'LOCAL_API_SECRET not set' });
+        return false;
+    }
+    const provided = req.headers['x-api-secret'];
+    if (!provided || provided !== LOCAL_API_SECRET) {
+        res.status(401).json({ error: 'Unauthorized' });
+        return false;
+    }
+    return true;
+}
+
+function runOpenClaw(args, { timeoutMs = 20000, stdin, env } = {}) {
+    return new Promise((resolve, reject) => {
+        const child = spawn('openclaw', args, {
+            stdio: ['pipe', 'pipe', 'pipe'],
+            env: {
+                ...process.env,
+                ...(env || {})
+            }
+        });
+
+        let stdout = '';
+        let stderr = '';
+        const timeout = setTimeout(() => {
+            try { child.kill(); } catch { /* ignore */ }
+        }, timeoutMs);
+
+        child.stdout.on('data', (data) => { stdout += data.toString(); });
+        child.stderr.on('data', (data) => { stderr += data.toString(); });
+
+        child.on('error', (err) => {
+            clearTimeout(timeout);
+            reject(err);
+        });
+
+        child.on('close', (code) => {
+            clearTimeout(timeout);
+            resolve({ code, stdout, stderr });
+        });
+
+        if (stdin !== undefined) {
+            child.stdin.write(String(stdin));
+            child.stdin.end();
+        } else {
+            child.stdin.end();
+        }
+    });
+}
+
+async function runOpenClawJson(args, options) {
+    const { code, stdout, stderr } = await runOpenClaw(args, options);
+    if (code !== 0) {
+        const err = new Error(`openclaw ${args.join(' ')} failed with code ${code}`);
+        err.stdout = stdout;
+        err.stderr = stderr;
+        throw err;
+    }
+    try {
+        return JSON.parse(stdout);
+    } catch (parseError) {
+        const err = new Error('Failed to parse openclaw JSON output');
+        err.stdout = stdout;
+        err.stderr = stderr;
+        err.parseError = parseError;
+        throw err;
+    }
+}
+
 function newSessionId() {
     return crypto.randomBytes(16).toString('hex');
 }
@@ -298,10 +368,7 @@ app.post('/api/providers/connect', (req, res) => {
     if (!LOCAL_API_SECRET) {
         return res.status(500).json({ error: 'LOCAL_API_SECRET not set' });
     }
-    const provided = req.headers['x-api-secret'];
-    if (!provided || provided !== LOCAL_API_SECRET) {
-        return res.status(401).json({ error: 'Unauthorized' });
-    }
+    if (!requireApiSecret(req, res)) return;
 
     const { provider, token, expiresIn, profileId } = req.body || {};
     if (!provider || !ALLOWED_PROVIDERS.has(provider)) {
@@ -533,10 +600,7 @@ app.post('/api/providers/oauth/start', (req, res) => {
     if (!LOCAL_API_SECRET) {
         return res.status(500).json({ error: 'LOCAL_API_SECRET not set' });
     }
-    const provided = req.headers['x-api-secret'];
-    if (!provided || provided !== LOCAL_API_SECRET) {
-        return res.status(401).json({ error: 'Unauthorized' });
-    }
+    if (!requireApiSecret(req, res)) return;
     const { provider } = req.body || {};
     if (!provider) return res.status(400).json({ error: 'Provider is required' });
 
@@ -595,10 +659,7 @@ app.post('/api/providers/oauth/complete', (req, res) => {
     if (!LOCAL_API_SECRET) {
         return res.status(500).json({ error: 'LOCAL_API_SECRET not set' });
     }
-    const provided = req.headers['x-api-secret'];
-    if (!provided || provided !== LOCAL_API_SECRET) {
-        return res.status(401).json({ error: 'Unauthorized' });
-    }
+    if (!requireApiSecret(req, res)) return;
     const { sessionId, redirectUrl } = req.body || {};
     if (!sessionId || !redirectUrl) {
         return res.status(400).json({ error: 'sessionId and redirectUrl are required' });
@@ -680,6 +741,224 @@ app.put('/api/workspace-file', (req, res) => {
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
+});
+
+app.get('/api/plugins', async (req, res) => {
+    try {
+        const { code, stdout, stderr } = await runOpenClaw(['plugins'], { timeoutMs: 20000 });
+        if (code !== 0) {
+            return res.status(500).json({ error: `Command failed with code ${code}`, stderr: stderr.slice(0, 2000) });
+        }
+        try {
+            const parsed = JSON.parse(stdout);
+            return res.json({ ok: true, parsed, stdout });
+        } catch {
+            return res.json({ ok: true, stdout });
+        }
+    } catch (error) {
+        return res.status(500).json({ error: error.message });
+    }
+});
+
+app.post('/api/plugins/enable', async (req, res) => {
+    if (!requireApiSecret(req, res)) return;
+    const { id } = req.body || {};
+    if (!id) return res.status(400).json({ error: 'Plugin id is required' });
+    try {
+        const { code, stdout, stderr } = await runOpenClaw(['plugins', 'enable', String(id)], { timeoutMs: 45000 });
+        if (code !== 0) {
+            return res.status(500).json({ error: `Command failed with code ${code}`, stderr: stderr.slice(0, 2000), stdout: stdout.slice(0, 2000) });
+        }
+        return res.json({ ok: true, stdout, stderr });
+    } catch (error) {
+        return res.status(500).json({ error: error.message });
+    }
+});
+
+app.post('/api/gateway/restart', async (req, res) => {
+    if (!requireApiSecret(req, res)) return;
+    try {
+        const { code, stdout, stderr } = await runOpenClaw(['gateway', 'restart'], { timeoutMs: 90000 });
+        if (code !== 0) {
+            return res.status(500).json({ error: `Command failed with code ${code}`, stderr: stderr.slice(0, 2000), stdout: stdout.slice(0, 2000) });
+        }
+        return res.json({ ok: true, stdout, stderr });
+    } catch (error) {
+        return res.status(500).json({ error: error.message });
+    }
+});
+
+app.get('/api/channels/status', async (req, res) => {
+    const attempts = [
+        { source: 'gateway.call status', args: ['gateway', 'call', 'status', '--json'], timeoutMs: 15000 },
+        { source: 'gateway.call health', args: ['gateway', 'call', 'health', '--json'], timeoutMs: 15000 },
+        { source: 'status', args: ['status'], timeoutMs: 15000 }
+    ];
+    let lastError = null;
+    for (const attempt of attempts) {
+        try {
+            const { code, stdout, stderr } = await runOpenClaw(attempt.args, { timeoutMs: attempt.timeoutMs });
+            if (code !== 0) throw Object.assign(new Error(`Command failed (${attempt.source})`), { stderr, stdout, code });
+            try {
+                const parsed = JSON.parse(stdout);
+                return res.json({ ok: true, source: attempt.source, parsed });
+            } catch {
+                return res.json({ ok: true, source: attempt.source, stdout });
+            }
+        } catch (error) {
+            lastError = error;
+        }
+    }
+    return res.status(500).json({ error: lastError?.message || 'Failed to fetch channel status' });
+});
+
+app.get('/api/channels/list', async (req, res) => {
+    const attempts = [
+        { source: 'channels.list --json', args: ['channels', 'list', '--json'] },
+        { source: 'channels.list', args: ['channels', 'list'] }
+    ];
+    let lastError = null;
+    for (const attempt of attempts) {
+        try {
+            const { code, stdout, stderr } = await runOpenClaw(attempt.args, { timeoutMs: 15000 });
+            if (code !== 0) throw Object.assign(new Error(`Command failed (${attempt.source})`), { stderr, stdout, code });
+            try {
+                const parsed = JSON.parse(stdout);
+                return res.json({ ok: true, source: attempt.source, parsed });
+            } catch {
+                return res.json({ ok: true, source: attempt.source, stdout });
+            }
+        } catch (error) {
+            lastError = error;
+        }
+    }
+    return res.status(500).json({ error: lastError?.message || 'Failed to list channels' });
+});
+
+app.post('/api/channels/add', async (req, res) => {
+    if (!requireApiSecret(req, res)) return;
+    const {
+        channel,
+        account,
+        name,
+        token,
+        tokenFile,
+        useEnv,
+        slackBotToken,
+        slackAppToken
+    } = req.body || {};
+
+    if (!channel) return res.status(400).json({ error: 'channel is required' });
+    const args = ['channels', 'add', '--channel', String(channel)];
+    if (account) args.push('--account', String(account));
+    if (name) args.push('--name', String(name));
+
+    const chan = String(channel);
+    if (chan === 'telegram') {
+        if (tokenFile) args.push('--token-file', String(tokenFile));
+        else if (useEnv) args.push('--use-env');
+        else if (token) args.push('--token', String(token));
+        else return res.status(400).json({ error: 'telegram requires token, tokenFile, or useEnv' });
+    } else if (chan === 'discord') {
+        if (useEnv) args.push('--use-env');
+        else if (token) args.push('--token', String(token));
+        else return res.status(400).json({ error: 'discord requires token or useEnv' });
+    } else if (chan === 'slack') {
+        if (slackBotToken) args.push('--bot-token', String(slackBotToken));
+        if (slackAppToken) args.push('--app-token', String(slackAppToken));
+        if (!slackBotToken && !slackAppToken) {
+            return res.status(400).json({ error: 'slack requires slackBotToken and/or slackAppToken' });
+        }
+    } else {
+        return res.status(400).json({ error: `Unsupported channel: ${chan}` });
+    }
+
+    try {
+        const { code, stdout, stderr } = await runOpenClaw(args, { timeoutMs: 45000 });
+        if (code !== 0) {
+            return res.status(500).json({ error: `Command failed with code ${code}`, stderr: stderr.slice(0, 2000), stdout: stdout.slice(0, 2000) });
+        }
+        return res.json({ ok: true, stdout, stderr });
+    } catch (error) {
+        return res.status(500).json({ error: error.message });
+    }
+});
+
+app.post('/api/channels/remove', async (req, res) => {
+    if (!requireApiSecret(req, res)) return;
+    const { channel, account } = req.body || {};
+    if (!channel) return res.status(400).json({ error: 'channel is required' });
+    const args = ['channels', 'remove', '--channel', String(channel)];
+    if (account) args.push('--account', String(account));
+    try {
+        const { code, stdout, stderr } = await runOpenClaw(args, { timeoutMs: 30000 });
+        if (code !== 0) {
+            return res.status(500).json({ error: `Command failed with code ${code}`, stderr: stderr.slice(0, 2000), stdout: stdout.slice(0, 2000) });
+        }
+        return res.json({ ok: true, stdout, stderr });
+    } catch (error) {
+        return res.status(500).json({ error: error.message });
+    }
+});
+
+app.post('/api/channels/logout', async (req, res) => {
+    if (!requireApiSecret(req, res)) return;
+    const { channel, account } = req.body || {};
+    if (!channel) return res.status(400).json({ error: 'channel is required' });
+    const args = ['channels', 'logout', '--channel', String(channel)];
+    if (account) args.push('--account', String(account));
+    try {
+        const { code, stdout, stderr } = await runOpenClaw(args, { timeoutMs: 45000 });
+        if (code !== 0) {
+            return res.status(500).json({ error: `Command failed with code ${code}`, stderr: stderr.slice(0, 2000), stdout: stdout.slice(0, 2000) });
+        }
+        return res.json({ ok: true, stdout, stderr });
+    } catch (error) {
+        return res.status(500).json({ error: error.message });
+    }
+});
+
+app.post('/api/channels/login', async (req, res) => {
+    if (!requireApiSecret(req, res)) return;
+    const { channel, account, verbose } = req.body || {};
+    if (!channel) return res.status(400).json({ error: 'channel is required' });
+
+    const args = ['channels', 'login', '--channel', String(channel)];
+    if (account) args.push('--account', String(account));
+    if (verbose) args.push('--verbose');
+
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-store');
+    res.flushHeaders?.();
+
+    const child = spawn('openclaw', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const killTimer = setTimeout(() => {
+        try { child.kill(); } catch { /* ignore */ }
+    }, 5 * 60 * 1000);
+
+    const writeChunk = (prefix, data) => {
+        try {
+            res.write(`${prefix}${data.toString()}`);
+        } catch {
+            // If client disconnects, stop the child.
+            try { child.kill(); } catch { /* ignore */ }
+        }
+    };
+
+    child.stdout.on('data', (data) => writeChunk('', data));
+    child.stderr.on('data', (data) => writeChunk('[stderr] ', data));
+
+    child.on('close', (code) => {
+        clearTimeout(killTimer);
+        try { res.write(`\n[exit] code=${code}\n`); } catch { /* ignore */ }
+        res.end();
+    });
+
+    child.on('error', (err) => {
+        clearTimeout(killTimer);
+        try { res.write(`\n[error] ${err.message}\n`); } catch { /* ignore */ }
+        res.end();
+    });
 });
 
 app.get('/api/workspace-list', (req, res) => {

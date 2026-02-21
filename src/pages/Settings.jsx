@@ -4,6 +4,7 @@ import { Save, RefreshCw } from 'lucide-react';
 
 const TABS = [
     { id: 'models', label: 'Models' },
+    { id: 'channels', label: 'Channels' },
     { id: 'soul', label: 'SOUL.md' },
     { id: 'workspace', label: 'Workspace File' },
     { id: 'openclaw', label: 'openclaw.json' }
@@ -32,6 +33,7 @@ const Settings = () => {
             </div>
 
             {activeTab === 'models' && <ModelsTab />}
+            {activeTab === 'channels' && <ChannelsTab />}
             {activeTab === 'soul' && <SoulTab />}
             {activeTab === 'workspace' && <WorkspaceFileTab />}
             {activeTab === 'openclaw' && <OpenClawConfigTab />}
@@ -875,6 +877,391 @@ const OpenClawConfigTab = () => {
                     {saving ? 'Saving...' : 'Save'}
                 </button>
             </div>
+        </div>
+    );
+};
+
+const ChannelsTab = () => {
+    const [loading, setLoading] = useState(true);
+    const [plugins, setPlugins] = useState([]);
+    const [channelStatus, setChannelStatus] = useState(null);
+    const [channelList, setChannelList] = useState(null);
+    const [error, setError] = useState('');
+    const [status, setStatus] = useState('');
+    const [saving, setSaving] = useState(false);
+
+    const [telegramToken, setTelegramToken] = useState('');
+    const [discordToken, setDiscordToken] = useState('');
+    const [slackBotToken, setSlackBotToken] = useState('');
+    const [slackAppToken, setSlackAppToken] = useState('');
+
+    const [loginOutput, setLoginOutput] = useState('');
+    const [whatsappQr, setWhatsappQr] = useState('');
+    const [whatsappPairing, setWhatsappPairing] = useState(false);
+
+    const secretHeaders = useMemo(() => {
+        return import.meta.env.VITE_LOCAL_API_SECRET
+            ? { 'x-api-secret': import.meta.env.VITE_LOCAL_API_SECRET }
+            : {};
+    }, []);
+
+    const loadAll = async () => {
+        setLoading(true);
+        setError('');
+        setStatus('');
+        try {
+            const [pluginsRes, statusRes, listRes] = await Promise.all([
+                fetch(apiUrl('/api/plugins')).catch(() => null),
+                fetch(apiUrl('/api/channels/status')).catch(() => null),
+                fetch(apiUrl('/api/channels/list')).catch(() => null)
+            ]);
+
+            if (pluginsRes?.ok) {
+                const data = await pluginsRes.json();
+                const parsed = data.parsed;
+                const nextPlugins = Array.isArray(parsed?.plugins) ? parsed.plugins : Array.isArray(parsed) ? parsed : [];
+                setPlugins(nextPlugins);
+            }
+
+            if (statusRes?.ok) {
+                const data = await statusRes.json();
+                setChannelStatus(data);
+            }
+
+            if (listRes?.ok) {
+                const data = await listRes.json();
+                setChannelList(data);
+            }
+        } catch (e) {
+            setError(e.message);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        loadAll();
+    }, []);
+
+    const pluginEnabled = (id) => {
+        const p = plugins.find(pl => pl?.id === id);
+        return Boolean(p?.enabled) || p?.status === 'loaded';
+    };
+
+    const enablePlugin = async (id) => {
+        setSaving(true);
+        setError('');
+        setStatus('');
+        try {
+            const res = await fetch(apiUrl('/api/plugins/enable'), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', ...secretHeaders },
+                body: JSON.stringify({ id })
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data.error || 'Failed to enable plugin');
+            setStatus(`Enabled plugin ${id}.`);
+            await loadAll();
+        } catch (e) {
+            setError(e.message);
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    const restartGateway = async () => {
+        setSaving(true);
+        setError('');
+        setStatus('');
+        try {
+            const res = await fetch(apiUrl('/api/gateway/restart'), {
+                method: 'POST',
+                headers: { ...secretHeaders }
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data.error || 'Failed to restart gateway');
+            setStatus('Gateway restarted.');
+            await loadAll();
+        } catch (e) {
+            setError(e.message);
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    const addChannel = async (payload) => {
+        setSaving(true);
+        setError('');
+        setStatus('');
+        try {
+            const res = await fetch(apiUrl('/api/channels/add'), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', ...secretHeaders },
+                body: JSON.stringify(payload)
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data.error || 'Failed to add/update channel');
+            setStatus(`${payload.channel} updated.`);
+            await loadAll();
+        } catch (e) {
+            setError(e.message);
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    const extractDataUri = (text) => {
+        const idx = text.indexOf('data:image/png;base64,');
+        if (idx === -1) return '';
+        const rest = text.slice(idx);
+        const match = rest.match(/^data:image\/png;base64,[A-Za-z0-9+/=]+/);
+        return match ? match[0] : '';
+    };
+
+    const startWhatsAppLogin = async () => {
+        setWhatsappPairing(true);
+        setLoginOutput('');
+        setWhatsappQr('');
+        setError('');
+        setStatus('');
+        try {
+            const res = await fetch(apiUrl('/api/channels/login'), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', ...secretHeaders },
+                body: JSON.stringify({ channel: 'whatsapp', verbose: true })
+            });
+            if (!res.ok) {
+                const data = await res.json().catch(() => ({}));
+                throw new Error(data.error || 'Failed to start WhatsApp login');
+            }
+            if (!res.body) throw new Error('No response stream');
+
+            const reader = res.body.getReader();
+            const decoder = new TextDecoder();
+            let buf = '';
+            while (true) {
+                const { value, done } = await reader.read();
+                if (done) break;
+                const chunk = decoder.decode(value, { stream: true });
+                buf += chunk;
+                setLoginOutput(prev => prev + chunk);
+                const uri = extractDataUri(buf);
+                if (uri && uri !== whatsappQr) setWhatsappQr(uri);
+            }
+            setStatus('WhatsApp login finished.');
+            await loadAll();
+        } catch (e) {
+            setError(e.message);
+        } finally {
+            setWhatsappPairing(false);
+        }
+    };
+
+    const renderStatus = () => {
+        if (!channelStatus) return 'No status loaded.';
+        if (channelStatus.parsed) return JSON.stringify(channelStatus.parsed, null, 2);
+        if (channelStatus.stdout) return String(channelStatus.stdout);
+        return JSON.stringify(channelStatus, null, 2);
+    };
+
+    const renderList = () => {
+        if (!channelList) return 'No list loaded.';
+        if (channelList.parsed) return JSON.stringify(channelList.parsed, null, 2);
+        if (channelList.stdout) return String(channelList.stdout);
+        return JSON.stringify(channelList, null, 2);
+    };
+
+    return (
+        <div className="space-y-6">
+            <div className="flex items-center justify-between">
+                <div>
+                    <h3 className="text-lg font-semibold text-gray-800">Channels</h3>
+                    <div className="text-xs text-gray-500">
+                        Tokens are sent to the local API once and configured via the OpenClaw CLI.
+                    </div>
+                </div>
+                <div className="flex gap-2">
+                    <button
+                        type="button"
+                        onClick={loadAll}
+                        disabled={loading || saving || whatsappPairing}
+                        className="px-3 py-2 bg-gray-100 rounded-lg text-sm flex items-center gap-2"
+                    >
+                        <RefreshCw className="w-4 h-4" />
+                        Refresh
+                    </button>
+                    <button
+                        type="button"
+                        onClick={restartGateway}
+                        disabled={loading || saving || whatsappPairing}
+                        className="px-3 py-2 bg-slate-900 text-white rounded-lg text-sm"
+                    >
+                        Restart Gateway
+                    </button>
+                </div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+                    <div className="flex items-center justify-between mb-2">
+                        <h4 className="font-semibold text-gray-800">Telegram</h4>
+                        <button
+                            type="button"
+                            onClick={() => enablePlugin('telegram')}
+                            disabled={saving || pluginEnabled('telegram')}
+                            className="text-xs px-2 py-1 rounded border border-gray-300 bg-white disabled:opacity-50"
+                        >
+                            {pluginEnabled('telegram') ? 'Plugin enabled' : 'Enable plugin'}
+                        </button>
+                    </div>
+                    <div className="grid grid-cols-1 gap-2">
+                        <input
+                            type="password"
+                            value={telegramToken}
+                            onChange={(e) => setTelegramToken(e.target.value)}
+                            className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                            placeholder="Bot token"
+                        />
+                        <button
+                            type="button"
+                            onClick={() => addChannel({ channel: 'telegram', token: telegramToken })}
+                            disabled={saving || !telegramToken}
+                            className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm disabled:opacity-50"
+                        >
+                            Save Telegram
+                        </button>
+                    </div>
+                </div>
+
+                <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+                    <div className="flex items-center justify-between mb-2">
+                        <h4 className="font-semibold text-gray-800">Discord</h4>
+                        <button
+                            type="button"
+                            onClick={() => enablePlugin('discord')}
+                            disabled={saving || pluginEnabled('discord')}
+                            className="text-xs px-2 py-1 rounded border border-gray-300 bg-white disabled:opacity-50"
+                        >
+                            {pluginEnabled('discord') ? 'Plugin enabled' : 'Enable plugin'}
+                        </button>
+                    </div>
+                    <div className="grid grid-cols-1 gap-2">
+                        <input
+                            type="password"
+                            value={discordToken}
+                            onChange={(e) => setDiscordToken(e.target.value)}
+                            className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                            placeholder="Bot token"
+                        />
+                        <button
+                            type="button"
+                            onClick={() => addChannel({ channel: 'discord', token: discordToken })}
+                            disabled={saving || !discordToken}
+                            className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm disabled:opacity-50"
+                        >
+                            Save Discord
+                        </button>
+                    </div>
+                </div>
+
+                <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+                    <div className="flex items-center justify-between mb-2">
+                        <h4 className="font-semibold text-gray-800">Slack</h4>
+                        <button
+                            type="button"
+                            onClick={() => enablePlugin('slack')}
+                            disabled={saving || pluginEnabled('slack')}
+                            className="text-xs px-2 py-1 rounded border border-gray-300 bg-white disabled:opacity-50"
+                        >
+                            {pluginEnabled('slack') ? 'Plugin enabled' : 'Enable plugin'}
+                        </button>
+                    </div>
+                    <div className="grid grid-cols-1 gap-2">
+                        <input
+                            type="password"
+                            value={slackBotToken}
+                            onChange={(e) => setSlackBotToken(e.target.value)}
+                            className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                            placeholder="Bot token (xoxb-...)"
+                        />
+                        <input
+                            type="password"
+                            value={slackAppToken}
+                            onChange={(e) => setSlackAppToken(e.target.value)}
+                            className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                            placeholder="App token (xapp-...)"
+                        />
+                        <button
+                            type="button"
+                            onClick={() => addChannel({ channel: 'slack', slackBotToken, slackAppToken })}
+                            disabled={saving || (!slackBotToken && !slackAppToken)}
+                            className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm disabled:opacity-50"
+                        >
+                            Save Slack
+                        </button>
+                    </div>
+                </div>
+
+                <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+                    <div className="flex items-center justify-between mb-2">
+                        <h4 className="font-semibold text-gray-800">WhatsApp</h4>
+                        <button
+                            type="button"
+                            onClick={() => enablePlugin('whatsapp')}
+                            disabled={saving || pluginEnabled('whatsapp')}
+                            className="text-xs px-2 py-1 rounded border border-gray-300 bg-white disabled:opacity-50"
+                        >
+                            {pluginEnabled('whatsapp') ? 'Plugin enabled' : 'Enable plugin'}
+                        </button>
+                    </div>
+                    <div className="space-y-2">
+                        <button
+                            type="button"
+                            onClick={startWhatsAppLogin}
+                            disabled={saving || whatsappPairing}
+                            className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm disabled:opacity-50"
+                        >
+                            {whatsappPairing ? 'Pairing…' : 'Start pairing (QR)'}
+                        </button>
+                        {whatsappQr && (
+                            <div className="border border-gray-200 rounded bg-white p-2 inline-block">
+                                <img src={whatsappQr} alt="WhatsApp QR" className="w-56 h-56" />
+                            </div>
+                        )}
+                        <textarea
+                            value={loginOutput}
+                            readOnly
+                            rows={6}
+                            className="w-full border border-gray-300 rounded-lg p-2 font-mono text-xs bg-white"
+                            placeholder="WhatsApp login output will appear here..."
+                        />
+                    </div>
+                </div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div>
+                    <h4 className="font-semibold text-gray-800 mb-2">Current channel status</h4>
+                    <textarea
+                        value={loading ? 'Loading…' : renderStatus()}
+                        readOnly
+                        rows={10}
+                        className="w-full border border-gray-300 rounded-lg p-3 font-mono text-xs bg-white"
+                    />
+                </div>
+                <div>
+                    <h4 className="font-semibold text-gray-800 mb-2">Configured channels</h4>
+                    <textarea
+                        value={loading ? 'Loading…' : renderList()}
+                        readOnly
+                        rows={10}
+                        className="w-full border border-gray-300 rounded-lg p-3 font-mono text-xs bg-white"
+                    />
+                </div>
+            </div>
+
+            {error && <div className="text-sm text-red-600">{error}</div>}
+            {status && <div className="text-sm text-green-600">{status}</div>}
         </div>
     );
 };
