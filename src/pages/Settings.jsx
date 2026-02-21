@@ -883,7 +883,6 @@ const OpenClawConfigTab = () => {
 
 const ChannelsTab = () => {
     const [loading, setLoading] = useState(true);
-    const [plugins, setPlugins] = useState([]);
     const [channelStatus, setChannelStatus] = useState(null);
     const [channelList, setChannelList] = useState(null);
     const [error, setError] = useState('');
@@ -932,8 +931,7 @@ const ChannelsTab = () => {
         setError('');
         setStatus('');
         try {
-            const [pluginsRes, statusRes, listRes] = await Promise.all([
-                fetch(apiUrl('/api/plugins')).catch(() => null),
+            const [statusRes, listRes] = await Promise.all([
                 fetch(apiUrl('/api/channels/status')).catch(() => null),
                 fetch(apiUrl('/api/channels/list')).catch(() => null)
             ]);
@@ -949,15 +947,10 @@ const ChannelsTab = () => {
                 }
             };
 
-            const [pluginsData, statusData, listData] = await Promise.all([
-                readJson(pluginsRes),
+            const [statusData, listData] = await Promise.all([
                 readJson(statusRes),
                 readJson(listRes)
             ]);
-
-            if (pluginsRes && !pluginsRes.ok) {
-                setError(pluginsData?.error || 'Failed to load plugins');
-            }
 
             if (statusRes && !statusRes.ok) {
                 setError(prev => prev || statusData?.error || 'Failed to load channel status');
@@ -965,16 +958,6 @@ const ChannelsTab = () => {
 
             if (listRes && !listRes.ok) {
                 setError(prev => prev || listData?.error || 'Failed to load channel list');
-            }
-
-            if (pluginsRes?.ok) {
-                const parsed = pluginsData?.parsed;
-                const nextPlugins = Array.isArray(parsed?.plugins)
-                    ? parsed.plugins
-                    : Array.isArray(parsed)
-                        ? parsed
-                        : [];
-                setPlugins(nextPlugins);
             }
 
             if (statusRes?.ok) {
@@ -994,27 +977,6 @@ const ChannelsTab = () => {
     useEffect(() => {
         loadAll();
     }, []);
-
-    const pluginEnabled = (id) => {
-        const p = plugins.find(pl => pl?.id === id);
-        return Boolean(p?.enabled) || p?.status === 'loaded';
-    };
-
-    const enablePlugin = async (id) => {
-        await withBusy(`Enabling ${id}…`, async () => {
-            setError('');
-            setStatus('');
-            const res = await fetch(apiUrl('/api/plugins/enable'), {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', ...secretHeaders },
-                body: JSON.stringify({ id })
-            });
-            const data = await res.json().catch(() => ({}));
-            if (!res.ok) throw new Error(data.error || 'Failed to enable plugin');
-            setStatus(`${id} enabled. Gateway restarted.`);
-            await loadAll();
-        }).catch((e) => setError(e.message));
-    };
 
     const addChannel = async (payload) => {
         await withBusy(`Saving ${payload.channel}…`, async () => {
@@ -1163,6 +1125,17 @@ const ChannelsTab = () => {
             }
         }
 
+        const chatObj = parsed?.chat;
+        if (chatObj && typeof chatObj === 'object' && !Array.isArray(chatObj)) {
+            const value = chatObj?.[channelId];
+            if (Array.isArray(value) && value.length) {
+                pushState('configured');
+            } else if (value) {
+                pushState(value);
+                pushState('configured');
+            }
+        }
+
         return states;
     };
 
@@ -1170,7 +1143,8 @@ const ChannelsTab = () => {
         const normalized = String(state || 'unknown').toLowerCase();
         const ok = ['connected', 'ready', 'online', 'linked', 'ok'].some(s => normalized.includes(s));
         const mid = ['configured', 'enabled', 'connecting', 'auth', 'pair', 'login', 'sync', 'starting', 'initializing'].some(s => normalized.includes(s));
-        return { ok, mid, normalized };
+        const configured = ok || normalized.includes('configured') || normalized.includes('token:config');
+        return { ok, mid, configured, normalized };
     };
 
     const getAggregateState = (channelId) => {
@@ -1204,10 +1178,9 @@ const ChannelsTab = () => {
     };
 
     const ChannelCard = ({ title, pluginId, children }) => {
-        const pluginOn = pluginEnabled(pluginId);
         const rawState = getAggregateState(pluginId);
-        const state = rawState || (pluginOn ? 'enabled' : 'disabled');
-        const connected = classifyState(state).ok;
+        const state = rawState || 'not set up';
+        const { ok: connected, configured } = classifyState(state);
         return (
             <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
                 <div className="flex items-center justify-between mb-2">
@@ -1215,16 +1188,8 @@ const ChannelsTab = () => {
                         <h4 className="font-semibold text-gray-800">{title}</h4>
                         {renderStatePill(state)}
                     </div>
-                    <button
-                        type="button"
-                        onClick={() => enablePlugin(pluginId)}
-                        disabled={isBusy || whatsappPairing || pluginOn}
-                        className="text-xs px-2 py-1 rounded border border-gray-300 bg-white disabled:opacity-50"
-                    >
-                        {pluginOn ? 'Plugin enabled' : 'Enable plugin'}
-                    </button>
                 </div>
-                {typeof children === 'function' ? children({ state, connected }) : children}
+                {typeof children === 'function' ? children({ state, connected, configured }) : children}
             </div>
         );
     };
@@ -1238,7 +1203,7 @@ const ChannelsTab = () => {
                         <div className="w-5 h-5 border-2 border-gray-300 border-t-gray-900 rounded-full animate-spin" />
                         <div className="text-sm font-semibold text-gray-900">{title}</div>
                     </div>
-                    <div className="mt-2 text-xs text-gray-600">Please wait…</div>
+                    <div className="mt-2 text-xs text-gray-600">Please wait… (this can take ~1–2 minutes)</div>
                 </div>
             </div>
         );
@@ -1323,11 +1288,11 @@ const ChannelsTab = () => {
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <ChannelCard title="Telegram" pluginId="telegram">
-                    {({ connected }) => (
-                        connected && !editMode.telegram ? (
+                    {({ connected, configured }) => (
+                        (connected || configured) && !editMode.telegram ? (
                             <div className="flex items-center justify-between gap-3">
                                 <div className="text-sm text-gray-700">
-                                    Telegram connected. Open Telegram and send <span className="font-mono">/start</span> to your bot.
+                                    Telegram is configured. Open Telegram and send <span className="font-mono">/start</span> to your bot.
                                 </div>
                                 <button
                                     type="button"
@@ -1344,6 +1309,7 @@ const ChannelsTab = () => {
                                     type="password"
                                     value={telegramToken}
                                     onChange={(e) => setTelegramToken(e.target.value)}
+                                    disabled={isBusy || whatsappPairing}
                                     className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
                                     placeholder="Bot token"
                                 />
@@ -1361,11 +1327,11 @@ const ChannelsTab = () => {
                 </ChannelCard>
 
                 <ChannelCard title="Discord" pluginId="discord">
-                    {({ connected }) => (
-                        connected && !editMode.discord ? (
+                    {({ connected, configured }) => (
+                        (connected || configured) && !editMode.discord ? (
                             <div className="flex items-center justify-between gap-3">
                                 <div className="text-sm text-gray-700">
-                                    Discord connected. Invite your bot to a server and send it a message.
+                                    Discord is configured. Invite your bot to a server and send it a message.
                                 </div>
                                 <button
                                     type="button"
@@ -1382,6 +1348,7 @@ const ChannelsTab = () => {
                                     type="password"
                                     value={discordToken}
                                     onChange={(e) => setDiscordToken(e.target.value)}
+                                    disabled={isBusy || whatsappPairing}
                                     className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
                                     placeholder="Bot token"
                                 />
@@ -1399,11 +1366,11 @@ const ChannelsTab = () => {
                 </ChannelCard>
 
                 <ChannelCard title="Slack" pluginId="slack">
-                    {({ connected }) => (
-                        connected && !editMode.slack ? (
+                    {({ connected, configured }) => (
+                        (connected || configured) && !editMode.slack ? (
                             <div className="flex items-center justify-between gap-3">
                                 <div className="text-sm text-gray-700">
-                                    Slack connected. Mention the bot in a channel to test.
+                                    Slack is configured. Mention the bot in a channel to test.
                                 </div>
                                 <button
                                     type="button"
@@ -1420,6 +1387,7 @@ const ChannelsTab = () => {
                                     type="password"
                                     value={slackBotToken}
                                     onChange={(e) => setSlackBotToken(e.target.value)}
+                                    disabled={isBusy || whatsappPairing}
                                     className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
                                     placeholder="Bot token (xoxb-...)"
                                 />
@@ -1427,6 +1395,7 @@ const ChannelsTab = () => {
                                     type="password"
                                     value={slackAppToken}
                                     onChange={(e) => setSlackAppToken(e.target.value)}
+                                    disabled={isBusy || whatsappPairing}
                                     className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
                                     placeholder="App token (xapp-...)"
                                 />
@@ -1444,11 +1413,11 @@ const ChannelsTab = () => {
                 </ChannelCard>
 
                 <ChannelCard title="WhatsApp" pluginId="whatsapp">
-                    {({ connected }) => (
+                    {({ connected, configured }) => (
                         <div className="space-y-2">
-                            {connected ? (
+                            {(connected || configured) ? (
                                 <div className="text-sm text-gray-700">
-                                    WhatsApp connected. Send a message to this WhatsApp account to test.
+                                    WhatsApp is configured. Send a message to this WhatsApp account to test.
                                 </div>
                             ) : (
                                 <div className="text-sm text-gray-700">
@@ -1459,11 +1428,22 @@ const ChannelsTab = () => {
                             <button
                                 type="button"
                                 onClick={startWhatsAppLogin}
-                                disabled={isBusy || whatsappPairing}
+                                disabled={isBusy || whatsappPairing || (connected || configured)}
                                 className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm disabled:opacity-50"
                             >
-                                {whatsappPairing ? 'Pairing…' : connected ? 'Re-pair (QR)' : 'Start pairing (QR)'}
+                                {whatsappPairing ? 'Pairing…' : 'Start pairing (QR)'}
                             </button>
+
+                            {(connected || configured) && (
+                                <button
+                                    type="button"
+                                    onClick={startWhatsAppLogin}
+                                    disabled={isBusy || whatsappPairing}
+                                    className="text-xs px-3 py-2 rounded border border-gray-300 bg-white disabled:opacity-50"
+                                >
+                                    Re-pair WhatsApp
+                                </button>
+                            )}
 
                             <div className="text-xs text-gray-600">
                                 This will open a pairing window with a QR code.
