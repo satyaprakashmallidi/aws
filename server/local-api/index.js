@@ -94,6 +94,13 @@ function writeJson(filePath, data) {
         if (data.agents?.defaults?.description !== undefined) {
             delete data.agents.defaults.description;
         }
+        if (Array.isArray(data.agents?.list)) {
+            for (const agent of data.agents.list) {
+                if (agent && typeof agent === 'object' && agent.description !== undefined) {
+                    delete agent.description;
+                }
+            }
+        }
     }
     fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
 }
@@ -359,7 +366,12 @@ app.put('/api/openclaw-config', (req, res) => {
     const { content } = req.body || {};
     if (typeof content !== 'string') return res.status(400).json({ error: 'Content is required' });
     try {
-        fs.writeFileSync(OPENCLAW_CONFIG_PATH, content);
+        try {
+            const parsed = JSON.parse(content);
+            writeJson(OPENCLAW_CONFIG_PATH, parsed);
+        } catch {
+            fs.writeFileSync(OPENCLAW_CONFIG_PATH, content);
+        }
         res.json({ ok: true, path: OPENCLAW_CONFIG_PATH });
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -764,10 +776,6 @@ app.patch('/api/agents', (req, res) => {
         if (!config.agents) config.agents = {};
         if (!config.agents.defaults) config.agents.defaults = {};
 
-        if (updates.description !== undefined) {
-            const entry = upsertAgentEntry(config, id);
-            entry.description = updates.description;
-        }
         if (updates.model) {
             if (!config.agents.defaults.model) config.agents.defaults.model = {};
             config.agents.defaults.model.primary = updates.model;

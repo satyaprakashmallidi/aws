@@ -27,21 +27,78 @@ const createSessionKey = (agentId) => {
 const normalizeContent = (content) => {
     if (content === undefined || content === null) return '';
     if (Array.isArray(content)) {
-        return content.map((part) => {
-            if (typeof part === 'string') return part;
-            if (part?.text) return part.text;
-            if (part?.content) return part.content;
-            return '';
-        }).join('');
+        return content.map((part) => normalizeContent(part)).join('');
     }
-    if (typeof content === 'object') return JSON.stringify(content, null, 2);
+    if (typeof content === 'object') {
+        // Common structured content shapes
+        if (typeof content.text === 'string' || Array.isArray(content.text)) return normalizeContent(content.text);
+        if (typeof content.content === 'string' || Array.isArray(content.content)) return normalizeContent(content.content);
+        if (typeof content.value === 'string' || Array.isArray(content.value)) return normalizeContent(content.value);
+        if (typeof content.message === 'string' || Array.isArray(content.message)) return normalizeContent(content.message);
+        if (typeof content.output === 'string' || Array.isArray(content.output)) return normalizeContent(content.output);
+        return JSON.stringify(content, null, 2);
+    }
     return String(content);
+};
+
+const stripOpenClawTags = (text) => {
+    if (!text) return '';
+    const s = String(text);
+    return s
+        .replace(/\uFEFF/g, '')
+        .replace(/<\/?(final|analysis|assistant|tool|system)\b[^>]*>/gi, '')
+        .trim();
+};
+
+const isUntrustedConversationInfo = (text) => {
+    const s = (text ?? '').toString().trimStart();
+    return s.startsWith('Conversation info (untrusted metadata):');
+};
+
+const extractMessageText = (msg) => {
+    if (!msg || typeof msg !== 'object') return '';
+    return normalizeContent(
+        msg.content
+        ?? msg.message?.content
+        ?? msg.delta?.content
+        ?? msg.delta?.text
+        ?? msg.text
+        ?? msg.output
+        ?? msg.result
+        ?? msg.payload?.content
+        ?? msg.payload?.text
+    );
 };
 
 const asJsonCodeBlock = (value) => {
     if (value === undefined || value === null) return '';
     if (typeof value === 'string') return value;
     return `\n\n\`\`\`json\n${JSON.stringify(value, null, 2)}\n\`\`\`\n`;
+};
+
+const asTextCodeBlock = (value, lang = '') => {
+    if (value === undefined || value === null) return '';
+    const text = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+    const safeLang = (lang || '').toString().trim();
+    return `\n\n\`\`\`${safeLang}\n${text}\n\`\`\``;
+};
+
+const isLikelyJsonText = (text) => {
+    const s = (text ?? '').toString().trim();
+    return (s.startsWith('{') && s.endsWith('}')) || (s.startsWith('[') && s.endsWith(']'));
+};
+
+const coerceIsoTimestamp = (value) => {
+    if (!value) return new Date().toISOString();
+    if (typeof value === 'string') {
+        const d = new Date(value);
+        return Number.isNaN(d.getTime()) ? new Date().toISOString() : d.toISOString();
+    }
+    if (typeof value === 'number') {
+        const d = new Date(value);
+        return Number.isNaN(d.getTime()) ? new Date().toISOString() : d.toISOString();
+    }
+    return new Date().toISOString();
 };
 
 const extractToolCalls = (msg) => {
@@ -145,35 +202,103 @@ const Chat = () => {
             const data = await response.json();
             const list = Array.isArray(data.messages) ? data.messages : [];
 
-            const normalized = list.map((msg) => {
-                const role = msg?.role || 'assistant';
-                const timestamp = msg?.timestamp || msg?.createdAt || new Date().toISOString();
+            const normalizeHistoryEntry = (msg) => {
+                const role = msg?.role || msg?.message?.role || 'assistant';
+                const timestamp = coerceIsoTimestamp(msg?.timestamp || msg?.createdAt || msg?.message?.timestamp);
 
-                if (role === 'tool') {
-                    const name = msg?.name || msg?.tool?.name || msg?.toolName || 'tool';
-                    const body = msg?.content ?? msg?.output ?? msg?.result ?? '';
-                    const content = `**Tool:** ${name}${asJsonCodeBlock(body) || `\n\n${normalizeContent(body)}`}`.trim();
-                    return { role: 'tool', content, timestamp };
+                const rawContent = msg?.content ?? msg?.message?.content;
+                const parts = Array.isArray(rawContent) ? rawContent : (rawContent ? [rawContent] : []);
+
+                // Tool results often come as role=toolResult with toolName/toolCallId.
+                if (role === 'tool' || role === 'toolResult' || role === 'tool_result') {
+                    const name = msg?.toolName || msg?.name || msg?.tool?.name || 'tool';
+                    const body = msg?.content ?? msg?.message?.content ?? msg?.details ?? msg?.output ?? msg?.result ?? '';
+                    const bodyText = normalizeContent(body);
+                    const block = isLikelyJsonText(bodyText) ? asTextCodeBlock(bodyText, 'json') : asTextCodeBlock(bodyText);
+                    const content = stripOpenClawTags(`**Tool result:** ${name}${block}`).trim();
+                    if (!content) return [];
+                    return [{ role: 'tool', content, timestamp }];
                 }
 
-                const contentText = normalizeContent(msg?.content);
-                const toolCallsText = extractToolCalls(msg);
+                const textChunks = [];
+                const toolCalls = [];
 
-                // OpenAI-style tool calling: assistant message may have empty content but tool_calls populated.
-                if (!contentText && toolCallsText) {
-                    return { role: 'tool', content: toolCallsText, timestamp };
+                for (const part of parts) {
+                    if (part === undefined || part === null) continue;
+                    if (typeof part === 'string') {
+                        textChunks.push(part);
+                        continue;
+                    }
+                    if (typeof part !== 'object') {
+                        textChunks.push(String(part));
+                        continue;
+                    }
+
+                    const t = (part.type || '').toString();
+
+                    if (t === 'text' && part.text) {
+                        textChunks.push(part.text);
+                        continue;
+                    }
+
+                    // Common tool-call shapes (OpenClaw / Anthropic-style)
+                    if (t === 'toolCall' || t === 'tool_call' || t === 'tool_use' || t === 'toolUse') {
+                        toolCalls.push({
+                            id: part.id,
+                            name: part.name,
+                            arguments: part.arguments ?? part.input
+                        });
+                        continue;
+                    }
+
+                    // Hide model thinking by default to match the native dashboard.
+                    if (t === 'thinking' || t === 'reasoning') {
+                        continue;
+                    }
+
+                    if (part.text) {
+                        textChunks.push(part.text);
+                        continue;
+                    }
+
+                    // Fallback: stringify unknown parts.
+                    textChunks.push(normalizeContent(part));
                 }
 
-                if (!contentText) {
-                    return { role: role === 'user' ? 'user' : 'assistant', content: '(empty message)', timestamp };
+                const contentClean = stripOpenClawTags(textChunks.join(''));
+                const toolCallsFromMsg = stripOpenClawTags(extractToolCalls(msg));
+
+                if (isUntrustedConversationInfo(contentClean)) return [];
+
+                const out = [];
+                if (contentClean) {
+                    out.push({ role: role === 'user' ? 'user' : 'assistant', content: contentClean, timestamp });
+                } else if (role === 'user') {
+                    out.push({ role: 'user', content: '', timestamp });
                 }
 
-                return {
-                    role: role === 'user' ? 'user' : 'assistant',
-                    content: contentText,
-                    timestamp
-                };
-            });
+                const toolCallMdFromParts = toolCalls.length
+                    ? toolCalls.map((call) => {
+                        const name = call?.name || call?.id || 'tool';
+                        const args = call?.arguments;
+                        const argsPretty = args === undefined || args === null
+                            ? ''
+                            : (typeof args === 'string' ? args : JSON.stringify(args, null, 2));
+                        return `**Tool call:** ${name}${argsPretty ? `\n\n\`\`\`json\n${argsPretty}\n\`\`\`` : ''}`;
+                    }).join('\n\n')
+                    : '';
+
+                const toolMd = [toolCallMdFromParts, toolCallsFromMsg].filter(Boolean).join('\n\n');
+                if (toolMd) {
+                    out.push({ role: 'tool', content: toolMd, timestamp });
+                }
+
+                // If the entry would be an empty non-user message, drop it.
+                return out.filter((m) => m.role === 'user' || (m.content && m.content.trim()));
+            };
+
+            const normalized = list.flatMap(normalizeHistoryEntry);
+
             setMessages(normalized);
         } catch (error) {
             console.error('Failed to fetch history:', error);
@@ -239,7 +364,10 @@ const Chat = () => {
         try {
             const response = await fetch(apiUrl('/api/chat'), {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Accept': 'text/event-stream'
+                },
                 body: JSON.stringify({
                     message: text,
                     agentId,
@@ -262,29 +390,53 @@ const Chat = () => {
                 throw new Error(toFriendlyChatError(rawMessage));
             }
 
-            const reader = response.body?.getReader();
-            if (!reader) {
-                const data = await response.json();
-                const choice = data.choices?.[0];
-                const content = choice?.message?.content;
-                const finishReason = choice?.finish_reason;
+            const contentType = (response.headers.get('content-type') || '').toLowerCase();
+            const isEventStream = contentType.includes('text/event-stream');
+
+            if (!isEventStream) {
+                const rawText = await response.text();
+                let data = null;
+                try {
+                    if (rawText && rawText.trim().startsWith('{')) {
+                        data = JSON.parse(rawText);
+                    }
+                } catch {
+                    // ignore
+                }
+                const choice = data?.choices?.[0];
+                const finishReason = choice?.finish_reason || data?.finish_reason;
+                const content =
+                    choice?.message?.content
+                    ?? choice?.delta?.content
+                    ?? choice?.delta?.text
+                    ?? data?.message?.content
+                    ?? data?.content;
+
                 if (content) {
                     const botMessage = {
                         role: 'assistant',
                         content: normalizeContent(content),
                         timestamp: new Date().toISOString()
                     };
-                    setMessages(prev => {
-                        const next = [...prev, botMessage];
-                        return next;
-                    });
+                    setMessages(prev => ([...prev, botMessage]));
                 } else {
                     const hint = finishReason === 'length'
                         ? 'Token/context limit exceeded. Start a new session or reduce the amount of history/context.'
-                        : 'No response content received.';
+                        : `No response content received. (content-type: ${contentType || 'unknown'})`;
                     setErrorMessage(hint);
                     setMessages(prev => ([...prev, { role: 'error', content: hint, timestamp: new Date().toISOString() }]));
                 }
+                return;
+            }
+
+            const reader = response.body?.getReader();
+            if (!reader) {
+                const rawText = await response.text();
+                const hint = rawText
+                    ? `No response stream received. Response started with: ${rawText.slice(0, 120)}`
+                    : 'No response stream received.';
+                setErrorMessage(hint);
+                setMessages(prev => ([...prev, { role: 'error', content: hint, timestamp: new Date().toISOString() }]));
                 return;
             }
 
@@ -293,6 +445,31 @@ const Chat = () => {
             let finishReason = null;
             const decoder = new TextDecoder('utf-8');
             let buffer = '';
+
+            let toolIndex = null;
+            const toolCallsByKey = new Map();
+
+            const renderToolCallsMarkdown = () => {
+                const calls = Array.from(toolCallsByKey.values());
+                if (calls.length === 0) return '';
+                return calls.map((call) => {
+                    const fn = call?.function || {};
+                    const name = fn?.name || call?.name || call?.tool || call?.id || 'tool';
+                    const args = fn?.arguments ?? call?.arguments;
+                    const argsText = (args === undefined || args === null) ? '' : String(args);
+                    const argsBlock = argsText ? `\n\n\`\`\`json\n${argsText}\n\`\`\`` : '';
+                    return `**Tool call:** ${name}${argsBlock}`;
+                }).join('\n\n');
+            };
+
+            const ensureToolMessage = () => {
+                if (toolIndex !== null) return;
+                setMessages(prev => {
+                    const next = [...prev, { role: 'tool', content: '', timestamp: new Date().toISOString() }];
+                    toolIndex = next.length - 1;
+                    return next;
+                });
+            };
 
             const ensureAssistantMessage = () => {
                 if (assistantIndex !== null) return;
@@ -313,11 +490,22 @@ const Chat = () => {
 
                 for (const line of lines) {
                     const trimmed = line.trim();
-                    if (!trimmed.startsWith('data:')) continue;
-                    const dataStr = trimmed.replace(/^data:\s*/, '');
-                    if (dataStr === '[DONE]') {
+                    if (!trimmed) continue;
+
+                    let dataStr = null;
+                    if (trimmed.startsWith('data:')) {
+                        dataStr = trimmed.replace(/^data:\s*/, '');
+                    } else if (trimmed === '[DONE]') {
                         break;
+                    } else if (trimmed.startsWith('{')) {
+                        // Some gateways stream JSONL instead of SSE data: lines.
+                        dataStr = trimmed;
+                    } else {
+                        continue;
                     }
+
+                    if (!dataStr) continue;
+                    if (dataStr === '[DONE]') break;
                     try {
                         const payload = JSON.parse(dataStr);
                         if (payload?.error) {
@@ -326,7 +514,46 @@ const Chat = () => {
                         }
                         const fr = payload?.choices?.[0]?.finish_reason;
                         if (fr) finishReason = fr;
+
+                        const toolDelta = payload?.choices?.[0]?.delta?.tool_calls
+                            ?? payload?.choices?.[0]?.message?.tool_calls
+                            ?? payload?.tool_calls
+                            ?? null;
+
+                        if (Array.isArray(toolDelta) && toolDelta.length > 0) {
+                            for (const item of toolDelta) {
+                                const key = item?.id ?? item?.index ?? JSON.stringify(item);
+                                const existing = toolCallsByKey.get(key) || { ...item };
+
+                                const nextFn = item?.function || {};
+                                const prevFn = existing.function || {};
+                                const nextArgs = nextFn.arguments;
+                                const prevArgs = prevFn.arguments;
+
+                                existing.type = item?.type ?? existing.type;
+                                existing.id = item?.id ?? existing.id;
+                                existing.function = {
+                                    ...prevFn,
+                                    ...nextFn,
+                                    arguments: (prevArgs || '') + (nextArgs || '')
+                                };
+
+                                toolCallsByKey.set(key, existing);
+                            }
+
+                            ensureToolMessage();
+                            const md = renderToolCallsMarkdown();
+                            setMessages(prev => {
+                                const next = [...prev];
+                                if (toolIndex !== null && next[toolIndex]) {
+                                    next[toolIndex] = { ...next[toolIndex], content: md };
+                                }
+                                return next;
+                            });
+                        }
+
                         const delta = payload?.choices?.[0]?.delta?.content
+                            ?? payload?.choices?.[0]?.delta?.text
                             ?? payload?.choices?.[0]?.message?.content
                             ?? '';
                         if (!delta) continue;
@@ -338,7 +565,7 @@ const Chat = () => {
                             const current = next[assistantIndex];
                             next[assistantIndex] = {
                                 ...current,
-                                content: (current?.content || '') + normalizeContent(delta)
+                                content: stripOpenClawTags((current?.content || '') + normalizeContent(delta))
                             };
                             return next;
                         });
@@ -348,12 +575,20 @@ const Chat = () => {
                 }
             }
 
-            if (!assistantText.trim()) {
+            const finalText = stripOpenClawTags(assistantText);
+            if (!finalText.trim() && toolCallsByKey.size === 0) {
                 const hint = finishReason === 'length'
                     ? 'Token/context limit exceeded. Start a new session or reduce the amount of history/context.'
                     : 'No response content received.';
                 setErrorMessage(hint);
                 setMessages(prev => ([...prev, { role: 'error', content: hint, timestamp: new Date().toISOString() }]));
+            } else if (assistantIndex !== null) {
+                setMessages(prev => {
+                    const next = [...prev];
+                    const current = next[assistantIndex];
+                    next[assistantIndex] = { ...current, content: finalText };
+                    return next;
+                });
             }
         } catch (error) {
             console.error('Failed to send message:', error);

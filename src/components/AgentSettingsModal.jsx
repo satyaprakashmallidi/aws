@@ -4,7 +4,6 @@ import { X, Save, AlertCircle } from 'lucide-react';
 
 const AgentSettingsModal = ({ agent, isOpen, onClose, onUpdate }) => {
     const [formData, setFormData] = useState({
-        description: '',
         model: '',
         identityName: '',
         identityEmoji: ''
@@ -32,7 +31,6 @@ const AgentSettingsModal = ({ agent, isOpen, onClose, onUpdate }) => {
                 .then(res => res.json())
                 .then(fullConfig => {
                     setFormData({
-                        description: fullConfig.description || '',
                         model: fullConfig.model || '',
                         identityName: fullConfig.identity?.name || '',
                         identityEmoji: fullConfig.identity?.emoji || ''
@@ -51,7 +49,6 @@ const AgentSettingsModal = ({ agent, isOpen, onClose, onUpdate }) => {
 
         try {
             const updates = {
-                description: formData.description,
                 model: formData.model,
                 identity: {
                     ...agent.identity,
@@ -158,19 +155,6 @@ const AgentSettingsModal = ({ agent, isOpen, onClose, onUpdate }) => {
                         <p className="mt-1 text-xs text-gray-500">
                             Select the primary AI model for this agent.
                         </p>
-                    </div>
-
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                            Description & Directives
-                        </label>
-                        <textarea
-                            value={formData.description}
-                            onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                            rows={4}
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
-                            placeholder="Describe what this agent does..."
-                        />
                     </div>
 
                     <div className="flex justify-end gap-3 pt-4">
