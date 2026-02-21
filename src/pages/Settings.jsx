@@ -1163,6 +1163,13 @@ const ChannelsTab = () => {
     };
 
     const renderStatePill = (state) => {
+        if (loading) {
+            return (
+                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold border bg-gray-100 text-gray-700 border-gray-200">
+                    loading…
+                </span>
+            );
+        }
         const { ok, mid } = classifyState(state);
         const className = ok
             ? 'bg-green-100 text-green-700 border-green-200'
@@ -1286,6 +1293,12 @@ const ChannelsTab = () => {
                 </div>
             )}
 
+            {loading && (
+                <div className="border border-gray-200 bg-gray-50 text-gray-800 rounded-lg p-3 text-sm">
+                    Loading channel configuration… just a moment.
+                </div>
+            )}
+
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <ChannelCard title="Telegram" pluginId="telegram">
                     {({ connected, configured }) => (
@@ -1297,7 +1310,7 @@ const ChannelsTab = () => {
                                 <button
                                     type="button"
                                     onClick={() => setEditMode(prev => ({ ...prev, telegram: true }))}
-                                    disabled={isBusy || whatsappPairing}
+                                    disabled={loading || isBusy || whatsappPairing}
                                     className="text-xs px-3 py-2 rounded border border-gray-300 bg-white disabled:opacity-50"
                                 >
                                     Update token
@@ -1309,14 +1322,14 @@ const ChannelsTab = () => {
                                     type="password"
                                     value={telegramToken}
                                     onChange={(e) => setTelegramToken(e.target.value)}
-                                    disabled={isBusy || whatsappPairing}
+                                    disabled={loading || isBusy || whatsappPairing}
                                     className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
                                     placeholder="Bot token"
                                 />
                                 <button
                                     type="button"
                                     onClick={() => addChannel({ channel: 'telegram', token: telegramToken })}
-                                    disabled={isBusy || whatsappPairing || !telegramToken}
+                                    disabled={loading || isBusy || whatsappPairing || !telegramToken}
                                     className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm disabled:opacity-50"
                                 >
                                     Save Telegram
@@ -1336,7 +1349,7 @@ const ChannelsTab = () => {
                                 <button
                                     type="button"
                                     onClick={() => setEditMode(prev => ({ ...prev, discord: true }))}
-                                    disabled={isBusy || whatsappPairing}
+                                    disabled={loading || isBusy || whatsappPairing}
                                     className="text-xs px-3 py-2 rounded border border-gray-300 bg-white disabled:opacity-50"
                                 >
                                     Update token
@@ -1348,14 +1361,14 @@ const ChannelsTab = () => {
                                     type="password"
                                     value={discordToken}
                                     onChange={(e) => setDiscordToken(e.target.value)}
-                                    disabled={isBusy || whatsappPairing}
+                                    disabled={loading || isBusy || whatsappPairing}
                                     className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
                                     placeholder="Bot token"
                                 />
                                 <button
                                     type="button"
                                     onClick={() => addChannel({ channel: 'discord', token: discordToken })}
-                                    disabled={isBusy || whatsappPairing || !discordToken}
+                                    disabled={loading || isBusy || whatsappPairing || !discordToken}
                                     className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm disabled:opacity-50"
                                 >
                                     Save Discord
@@ -1375,7 +1388,7 @@ const ChannelsTab = () => {
                                 <button
                                     type="button"
                                     onClick={() => setEditMode(prev => ({ ...prev, slack: true }))}
-                                    disabled={isBusy || whatsappPairing}
+                                    disabled={loading || isBusy || whatsappPairing}
                                     className="text-xs px-3 py-2 rounded border border-gray-300 bg-white disabled:opacity-50"
                                 >
                                     Update tokens
@@ -1387,7 +1400,7 @@ const ChannelsTab = () => {
                                     type="password"
                                     value={slackBotToken}
                                     onChange={(e) => setSlackBotToken(e.target.value)}
-                                    disabled={isBusy || whatsappPairing}
+                                    disabled={loading || isBusy || whatsappPairing}
                                     className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
                                     placeholder="Bot token (xoxb-...)"
                                 />
@@ -1395,14 +1408,14 @@ const ChannelsTab = () => {
                                     type="password"
                                     value={slackAppToken}
                                     onChange={(e) => setSlackAppToken(e.target.value)}
-                                    disabled={isBusy || whatsappPairing}
+                                    disabled={loading || isBusy || whatsappPairing}
                                     className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
                                     placeholder="App token (xapp-...)"
                                 />
                                 <button
                                     type="button"
                                     onClick={() => addChannel({ channel: 'slack', slackBotToken, slackAppToken })}
-                                    disabled={isBusy || whatsappPairing || (!slackBotToken && !slackAppToken)}
+                                    disabled={loading || isBusy || whatsappPairing || (!slackBotToken && !slackAppToken)}
                                     className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm disabled:opacity-50"
                                 >
                                     Save Slack
@@ -1428,7 +1441,7 @@ const ChannelsTab = () => {
                             <button
                                 type="button"
                                 onClick={startWhatsAppLogin}
-                                disabled={isBusy || whatsappPairing || (connected || configured)}
+                                disabled={loading || isBusy || whatsappPairing || (connected || configured)}
                                 className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm disabled:opacity-50"
                             >
                                 {whatsappPairing ? 'Pairing…' : 'Start pairing (QR)'}
@@ -1438,7 +1451,7 @@ const ChannelsTab = () => {
                                 <button
                                     type="button"
                                     onClick={startWhatsAppLogin}
-                                    disabled={isBusy || whatsappPairing}
+                                    disabled={loading || isBusy || whatsappPairing}
                                     className="text-xs px-3 py-2 rounded border border-gray-300 bg-white disabled:opacity-50"
                                 >
                                     Re-pair WhatsApp

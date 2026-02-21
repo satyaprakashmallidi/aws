@@ -9,7 +9,23 @@ import crypto from 'crypto';
 const app = express();
 
 const HOME = os.homedir();
-const OPENCLAW_DIR = process.env.OPENCLAW_DIR || path.join(HOME, '.openclaw');
+function resolveOpenClawDir() {
+    if (process.env.OPENCLAW_DIR) return process.env.OPENCLAW_DIR;
+    const candidates = [
+        path.join(HOME, '.openclaw'),
+        '/home/ubuntu/.openclaw'
+    ];
+    for (const candidate of candidates) {
+        try {
+            if (fs.existsSync(candidate)) return candidate;
+        } catch {
+            // ignore
+        }
+    }
+    return path.join(HOME, '.openclaw');
+}
+
+const OPENCLAW_DIR = resolveOpenClawDir();
 const OPENCLAW_CONFIG_PATH = process.env.OPENCLAW_CONFIG_PATH || path.join(OPENCLAW_DIR, 'openclaw.json');
 const WORKSPACE_DIR = process.env.OPENCLAW_WORKSPACE || path.join(OPENCLAW_DIR, 'workspace');
 const SOUL_PATHS = [
@@ -78,6 +94,131 @@ function parseToolOutputJson(stdout, stderr) {
     return null;
 }
 
+function getSessionsIndexPath(agentId = 'main') {
+    return path.join(OPENCLAW_DIR, 'agents', agentId, 'sessions', 'sessions.json');
+}
+
+function readSessionsIndex(agentId = 'main') {
+    const indexPath = getSessionsIndexPath(agentId);
+    if (!fs.existsSync(indexPath)) return null;
+    const raw = fs.readFileSync(indexPath, 'utf8');
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return null;
+    return parsed;
+}
+
+function sessionsIndexToList(indexObj) {
+    if (!indexObj || typeof indexObj !== 'object') return [];
+    return Object.entries(indexObj).map(([key, meta]) => {
+        if (!meta || typeof meta !== 'object') return { key };
+        return sanitizeSessionSummary({ key, ...meta });
+    });
+}
+
+function sanitizeSessionSummary(session) {
+    const key = session?.key || session?.sessionKey || session?.id || '';
+    const kind = session?.kind || session?.chatType || session?.type;
+    const updatedAt = session?.updatedAt || session?.timestamp;
+    const sessionId = session?.sessionId || session?.id;
+
+    const out = {
+        key,
+        ...(kind ? { kind } : {}),
+        ...(updatedAt ? { updatedAt } : {}),
+        ...(sessionId ? { sessionId } : {})
+    };
+
+    const allow = [
+        'ageMs',
+        'systemSent',
+        'abortedLastRun',
+        'inputTokens',
+        'outputTokens',
+        'totalTokens',
+        'totalTokensFresh',
+        'model',
+        'modelProvider',
+        'contextTokens',
+        'deliveryContext',
+        'lastChannel',
+        'origin'
+    ];
+    for (const k of allow) {
+        if (session?.[k] !== undefined) out[k] = session[k];
+    }
+    return out;
+}
+
+async function listSessionsCli({ limit = 500 } = {}) {
+    const attempts = [
+        ['sessions', '--json'],
+        ['sessions', 'list', '--json'],
+        ['sessions']
+    ];
+    let last = null;
+    for (const args of attempts) {
+        const { code, stdout, stderr } = await runOpenClaw(args, { timeoutMs: 20000 });
+        last = { code, stdout, stderr, args };
+        if (code !== 0) continue;
+        const parsed = parseToolOutputJson(stdout, stderr);
+        if (!parsed) continue;
+        if (Array.isArray(parsed.sessions)) return { sessions: parsed.sessions, total: parsed.count || parsed.total || parsed.sessions.length };
+        if (Array.isArray(parsed)) return { sessions: parsed, total: parsed.length };
+        if (parsed && typeof parsed === 'object') {
+            const sessions = parsed.sessions || parsed.items || [];
+            if (Array.isArray(sessions)) return { sessions, total: parsed.count || parsed.total || sessions.length };
+        }
+    }
+    throw new Error(`Failed to list sessions via CLI${last ? ` (last: ${OPENCLAW_CLI} ${last.args.join(' ')})` : ''}`);
+}
+
+function readSessionHistoryFromDisk(sessionKey, { limit = 50, includeTools = false, agentId = 'main' } = {}) {
+    const index = readSessionsIndex(agentId);
+    if (!index) return null;
+    const meta = index?.[sessionKey];
+    if (!meta) return null;
+
+    const sessionsDir = path.join(OPENCLAW_DIR, 'agents', agentId, 'sessions');
+    const fileCandidate = meta.sessionFile || (meta.sessionId ? path.join(sessionsDir, `${meta.sessionId}.jsonl`) : null);
+    if (!fileCandidate) return null;
+
+    const resolved = path.isAbsolute(fileCandidate) ? fileCandidate : path.join(sessionsDir, fileCandidate);
+    if (!fs.existsSync(resolved)) return null;
+
+    const raw = fs.readFileSync(resolved, 'utf8');
+    const lines = raw.split(/\r?\n/).filter(Boolean);
+    const events = [];
+    for (const line of lines) {
+        const parsed = parseJsonLoose(line);
+        if (!parsed || typeof parsed !== 'object') continue;
+        if (parsed.type !== 'message' || !parsed.message) continue;
+        const role = parsed.message?.role;
+        if (!includeTools && (role === 'tool' || role === 'toolResult' || role === 'tool_result')) continue;
+        events.push(parsed);
+    }
+
+    const total = events.length;
+    const sliced = limit > 0 ? events.slice(Math.max(0, events.length - limit)) : events;
+    return { messages: sliced, total };
+}
+
+function takeRecentSessionsWithMain(sessions, { agentId = 'main', limit = 30 } = {}) {
+    const list = Array.isArray(sessions) ? sessions.filter(Boolean) : [];
+    const mainKey = `agent:${agentId}:main`;
+    const byUpdated = (a, b) => (b?.updatedAt || 0) - (a?.updatedAt || 0);
+
+    const main = list.find(s => (s?.key || s?.sessionKey || s?.id) === mainKey);
+    const rest = list
+        .filter(s => (s?.key || s?.sessionKey || s?.id) !== mainKey)
+        .sort(byUpdated);
+
+    const max = Math.max(1, Number(limit) || 30);
+    const take = main ? max - 1 : max;
+    const trimmed = rest.slice(0, take);
+    if (main) return [main, ...trimmed];
+    return trimmed;
+}
+
 const ALLOWED_PROVIDERS = new Set([
     'google-antigravity',
     'openai',
@@ -135,6 +276,9 @@ function runOpenClaw(args, { timeoutMs = 20000, stdin, env } = {}) {
             stdio: ['pipe', 'pipe', 'pipe'],
             env: {
                 ...process.env,
+                OPENCLAW_DIR,
+                OPENCLAW_CONFIG_PATH,
+                OPENCLAW_WORKSPACE: WORKSPACE_DIR,
                 ...(env || {})
             }
         });
@@ -1210,29 +1354,66 @@ app.get('/api/chat', async (req, res) => {
     if (action !== 'history' && action !== 'sessions') return res.status(400).json({ error: 'Invalid action' });
     try {
         if (action === 'sessions') {
-            const response = await invokeTool('sessions_list', {
-                // Broaden filters so older/other kinds show up in the UI selector.
-                limit: limit ? parseInt(limit, 10) : 200,
-                activeMinutes: 43200,
-                messageLimit: 3
-            });
-            const details = response?.result?.details || {};
-            return res.json({
-                sessions: details.sessions || response.sessions || [],
-                total: details.count || response.total || 0
-            });
+            const requestedLimit = limit ? parseInt(limit, 10) : 30;
+
+            // 1) Try gateway tool (fast when available)
+            try {
+                const response = await invokeTool('sessions_list', {
+                    limit: requestedLimit,
+                    activeMinutes: 43200,
+                    messageLimit: 3
+                });
+                const details = response?.result?.details || {};
+                const raw = details.sessions || response.sessions || [];
+                const sessions = (Array.isArray(raw) ? raw : []).map(sanitizeSessionSummary);
+                if (sessions.length > 1) {
+                    sessions.sort((a, b) => (b?.updatedAt || 0) - (a?.updatedAt || 0));
+                    const limited = takeRecentSessionsWithMain(sessions, { agentId: 'main', limit: requestedLimit });
+                    return res.json({ sessions: limited, total: details.count || response.total || sessions.length, source: 'gateway' });
+                }
+            } catch {
+                // ignore and fall back
+            }
+
+            // 2) Try CLI (matches what TUI shows)
+            try {
+                const { sessions, total } = await listSessionsCli({ limit: requestedLimit });
+                const list = (Array.isArray(sessions) ? sessions : []).map(sanitizeSessionSummary);
+                list.sort((a, b) => (b?.updatedAt || 0) - (a?.updatedAt || 0));
+                const limited = takeRecentSessionsWithMain(list, { agentId: 'main', limit: requestedLimit });
+                return res.json({ sessions: limited, total: total || list.length, source: 'cli' });
+            } catch {
+                // ignore and fall back
+            }
+
+            // 3) Read from disk
+            const index = readSessionsIndex('main');
+            if (!index) return res.status(500).json({ error: 'Failed to load sessions (no sessions index found)' });
+            const list = sessionsIndexToList(index);
+            list.sort((a, b) => (b?.updatedAt || 0) - (a?.updatedAt || 0));
+            const limited = takeRecentSessionsWithMain(list, { agentId: 'main', limit: requestedLimit });
+            return res.json({ sessions: limited, total: list.length, source: 'disk' });
+        }
+
+        // Prefer disk-based history (avoids relying on tools/invoke).
+        const requestedLimit = limit ? parseInt(limit, 10) : 50;
+        const wantTools = includeTools === 'true';
+        const disk = readSessionHistoryFromDisk(sessionKey, { limit: requestedLimit, includeTools: wantTools, agentId: 'main' });
+        if (disk) {
+            return res.json({ sessionKey, messages: disk.messages, total: disk.total, source: 'disk' });
         }
 
         const response = await invokeTool('sessions_history', {
             sessionKey,
-            limit: limit ? parseInt(limit, 10) : 50,
-            includeTools: includeTools === 'true'
+            limit: requestedLimit,
+            includeTools: wantTools
         });
         const details = response?.result?.details || {};
-        res.json({
+        return res.json({
             sessionKey,
             messages: details.messages || response.messages || [],
-            total: details.total || response.total || 0
+            total: details.total || response.total || 0,
+            source: 'gateway'
         });
     } catch (error) {
         res.status(500).json({ error: error.message });

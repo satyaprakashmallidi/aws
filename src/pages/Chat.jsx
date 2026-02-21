@@ -179,7 +179,7 @@ const Chat = () => {
     const fetchSessions = async () => {
         setSessionsLoading(true);
         try {
-            const response = await fetch(apiUrl('/api/chat?action=sessions'));
+            const response = await fetch(apiUrl('/api/chat?action=sessions&limit=30'));
             if (!response.ok) throw new Error('Failed to load sessions');
             const data = await response.json();
             const list = Array.isArray(data.sessions) ? data.sessions : [];
