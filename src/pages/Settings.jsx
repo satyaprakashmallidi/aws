@@ -889,6 +889,7 @@ const ChannelsTab = () => {
     const [error, setError] = useState('');
     const [status, setStatus] = useState('');
     const [saving, setSaving] = useState(false);
+    const [busyMessage, setBusyMessage] = useState('');
 
     const [telegramToken, setTelegramToken] = useState('');
     const [discordToken, setDiscordToken] = useState('');
@@ -898,12 +899,27 @@ const ChannelsTab = () => {
     const [loginOutput, setLoginOutput] = useState('');
     const [whatsappQr, setWhatsappQr] = useState('');
     const [whatsappPairing, setWhatsappPairing] = useState(false);
+    const [whatsappModalOpen, setWhatsappModalOpen] = useState(false);
 
     const secretHeaders = useMemo(() => {
         return import.meta.env.VITE_LOCAL_API_SECRET
             ? { 'x-api-secret': import.meta.env.VITE_LOCAL_API_SECRET }
             : {};
     }, []);
+
+    const hasSecret = Boolean(import.meta.env.VITE_LOCAL_API_SECRET);
+    const isBusy = Boolean(busyMessage) || saving;
+
+    const withBusy = async (message, fn) => {
+        setBusyMessage(message);
+        setSaving(true);
+        try {
+            return await fn();
+        } finally {
+            setSaving(false);
+            setBusyMessage('');
+        }
+    };
 
     const loadAll = async () => {
         setLoading(true);
@@ -949,10 +965,9 @@ const ChannelsTab = () => {
     };
 
     const enablePlugin = async (id) => {
-        setSaving(true);
-        setError('');
-        setStatus('');
-        try {
+        await withBusy(`Enabling ${id}…`, async () => {
+            setError('');
+            setStatus('');
             const res = await fetch(apiUrl('/api/plugins/enable'), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', ...secretHeaders },
@@ -960,40 +975,15 @@ const ChannelsTab = () => {
             });
             const data = await res.json().catch(() => ({}));
             if (!res.ok) throw new Error(data.error || 'Failed to enable plugin');
-            setStatus(`Enabled plugin ${id}.`);
+            setStatus(`${id} enabled. Gateway restarted.`);
             await loadAll();
-        } catch (e) {
-            setError(e.message);
-        } finally {
-            setSaving(false);
-        }
-    };
-
-    const restartGateway = async () => {
-        setSaving(true);
-        setError('');
-        setStatus('');
-        try {
-            const res = await fetch(apiUrl('/api/gateway/restart'), {
-                method: 'POST',
-                headers: { ...secretHeaders }
-            });
-            const data = await res.json().catch(() => ({}));
-            if (!res.ok) throw new Error(data.error || 'Failed to restart gateway');
-            setStatus('Gateway restarted.');
-            await loadAll();
-        } catch (e) {
-            setError(e.message);
-        } finally {
-            setSaving(false);
-        }
+        }).catch((e) => setError(e.message));
     };
 
     const addChannel = async (payload) => {
-        setSaving(true);
-        setError('');
-        setStatus('');
-        try {
+        await withBusy(`Saving ${payload.channel}…`, async () => {
+            setError('');
+            setStatus('');
             const res = await fetch(apiUrl('/api/channels/add'), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', ...secretHeaders },
@@ -1001,13 +991,9 @@ const ChannelsTab = () => {
             });
             const data = await res.json().catch(() => ({}));
             if (!res.ok) throw new Error(data.error || 'Failed to add/update channel');
-            setStatus(`${payload.channel} updated.`);
+            setStatus(`${payload.channel} saved. Gateway restarted.`);
             await loadAll();
-        } catch (e) {
-            setError(e.message);
-        } finally {
-            setSaving(false);
-        }
+        }).catch((e) => setError(e.message));
     };
 
     const extractDataUri = (text) => {
@@ -1020,6 +1006,7 @@ const ChannelsTab = () => {
 
     const startWhatsAppLogin = async () => {
         setWhatsappPairing(true);
+        setWhatsappModalOpen(true);
         setLoginOutput('');
         setWhatsappQr('');
         setError('');
@@ -1057,63 +1044,162 @@ const ChannelsTab = () => {
         }
     };
 
-    const renderStatus = () => {
-        if (!channelStatus) return 'No status loaded.';
-        if (channelStatus.parsed) return JSON.stringify(channelStatus.parsed, null, 2);
-        if (channelStatus.stdout) return String(channelStatus.stdout);
-        return JSON.stringify(channelStatus, null, 2);
+    const channelStates = useMemo(() => {
+        const parsed = channelStatus?.parsed;
+        if (!parsed || typeof parsed !== 'object') return {};
+        const raw = parsed?.channels && typeof parsed.channels === 'object' ? parsed.channels : {};
+        const out = {};
+        for (const [key, value] of Object.entries(raw)) {
+            if (!value || typeof value !== 'object') {
+                out[key] = { state: String(value || 'unknown') };
+                continue;
+            }
+            const state =
+                value.state
+                || value.status
+                || value.connectionState
+                || (value.connected ? 'connected' : '')
+                || 'unknown';
+            out[key] = { state: String(state), raw: value };
+        }
+        return out;
+    }, [channelStatus]);
+
+    const renderStatePill = (state) => {
+        const normalized = String(state || 'unknown').toLowerCase();
+        const ok = ['connected', 'ready', 'online', 'linked'].some(s => normalized.includes(s));
+        const mid = ['connecting', 'auth', 'pair', 'login', 'sync'].some(s => normalized.includes(s));
+        const className = ok
+            ? 'bg-green-100 text-green-700 border-green-200'
+            : mid
+                ? 'bg-amber-100 text-amber-800 border-amber-200'
+                : 'bg-red-100 text-red-700 border-red-200';
+        const label = state ? String(state) : 'unknown';
+        return (
+            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold border ${className}`}>
+                {label}
+            </span>
+        );
     };
 
-    const renderList = () => {
-        if (!channelList) return 'No list loaded.';
-        if (channelList.parsed) return JSON.stringify(channelList.parsed, null, 2);
-        if (channelList.stdout) return String(channelList.stdout);
-        return JSON.stringify(channelList, null, 2);
+    const ChannelCard = ({ title, pluginId, stateKey, children }) => {
+        const pluginOn = pluginEnabled(pluginId);
+        const state = channelStates?.[stateKey]?.state || (pluginOn ? 'enabled' : 'disabled');
+        return (
+            <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+                <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                        <h4 className="font-semibold text-gray-800">{title}</h4>
+                        {renderStatePill(state)}
+                    </div>
+                    <button
+                        type="button"
+                        onClick={() => enablePlugin(pluginId)}
+                        disabled={isBusy || whatsappPairing || pluginOn}
+                        className="text-xs px-2 py-1 rounded border border-gray-300 bg-white disabled:opacity-50"
+                    >
+                        {pluginOn ? 'Plugin enabled' : 'Enable plugin'}
+                    </button>
+                </div>
+                {children}
+            </div>
+        );
+    };
+
+    const Overlay = ({ title }) => {
+        if (!title) return null;
+        return (
+            <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
+                <div className="bg-white rounded-lg shadow-xl border border-gray-200 w-full max-w-md p-5">
+                    <div className="flex items-center gap-3">
+                        <div className="w-5 h-5 border-2 border-gray-300 border-t-gray-900 rounded-full animate-spin" />
+                        <div className="text-sm font-semibold text-gray-900">{title}</div>
+                    </div>
+                    <div className="mt-2 text-xs text-gray-600">Please wait…</div>
+                </div>
+            </div>
+        );
+    };
+
+    const WhatsAppModal = () => {
+        if (!whatsappModalOpen) return null;
+        return (
+            <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
+                <div className="bg-white rounded-lg shadow-xl border border-gray-200 w-full max-w-3xl p-5">
+                    <div className="flex items-start justify-between gap-4">
+                        <div>
+                            <div className="text-base font-semibold text-gray-900">WhatsApp pairing</div>
+                            <div className="text-xs text-gray-600 mt-1">
+                                Open WhatsApp on your phone → Linked devices → Link a device → scan this QR.
+                            </div>
+                        </div>
+                        <button
+                            type="button"
+                            onClick={() => setWhatsappModalOpen(false)}
+                            disabled={whatsappPairing}
+                            className="text-sm px-3 py-1.5 rounded border border-gray-300 disabled:opacity-50"
+                        >
+                            {whatsappPairing ? 'Pairing…' : 'Close'}
+                        </button>
+                    </div>
+
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
+                        <div className="border border-gray-200 rounded-lg bg-gray-50 p-3 flex items-center justify-center min-h-[320px]">
+                            {whatsappQr ? (
+                                <img src={whatsappQr} alt="WhatsApp QR" className="w-72 h-72" />
+                            ) : (
+                                <div className="flex items-center gap-3 text-sm text-gray-700">
+                                    <div className="w-5 h-5 border-2 border-gray-300 border-t-gray-900 rounded-full animate-spin" />
+                                    Generating QR…
+                                </div>
+                            )}
+                        </div>
+                        <textarea
+                            value={loginOutput}
+                            readOnly
+                            rows={14}
+                            className="w-full border border-gray-300 rounded-lg p-3 font-mono text-xs bg-white"
+                            placeholder="Pairing output will appear here…"
+                        />
+                    </div>
+                </div>
+            </div>
+        );
     };
 
     return (
         <div className="space-y-6">
+            <Overlay title={busyMessage} />
+            <WhatsAppModal />
+
             <div className="flex items-center justify-between">
                 <div>
                     <h3 className="text-lg font-semibold text-gray-800">Channels</h3>
                     <div className="text-xs text-gray-500">
-                        Tokens are sent to the local API once and configured via the OpenClaw CLI.
+                        No-code setup: enable a plugin, add credentials, and it will restart the gateway automatically.
                     </div>
                 </div>
                 <div className="flex gap-2">
                     <button
                         type="button"
                         onClick={loadAll}
-                        disabled={loading || saving || whatsappPairing}
+                        disabled={loading || isBusy || whatsappPairing}
                         className="px-3 py-2 bg-gray-100 rounded-lg text-sm flex items-center gap-2"
                     >
                         <RefreshCw className="w-4 h-4" />
                         Refresh
                     </button>
-                    <button
-                        type="button"
-                        onClick={restartGateway}
-                        disabled={loading || saving || whatsappPairing}
-                        className="px-3 py-2 bg-slate-900 text-white rounded-lg text-sm"
-                    >
-                        Restart Gateway
-                    </button>
                 </div>
             </div>
 
+            {!hasSecret && (
+                <div className="border border-amber-200 bg-amber-50 text-amber-900 rounded-lg p-3 text-sm">
+                    Admin secret not configured. Set <span className="font-mono">VITE_LOCAL_API_SECRET</span> in Vercel and <span className="font-mono">LOCAL_API_SECRET</span> on the VPS service.
+                </div>
+            )}
+
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
-                    <div className="flex items-center justify-between mb-2">
-                        <h4 className="font-semibold text-gray-800">Telegram</h4>
-                        <button
-                            type="button"
-                            onClick={() => enablePlugin('telegram')}
-                            disabled={saving || pluginEnabled('telegram')}
-                            className="text-xs px-2 py-1 rounded border border-gray-300 bg-white disabled:opacity-50"
-                        >
-                            {pluginEnabled('telegram') ? 'Plugin enabled' : 'Enable plugin'}
-                        </button>
-                    </div>
+                <ChannelCard title="Telegram" pluginId="telegram" stateKey="telegram">
                     <div className="grid grid-cols-1 gap-2">
                         <input
                             type="password"
@@ -1125,26 +1211,15 @@ const ChannelsTab = () => {
                         <button
                             type="button"
                             onClick={() => addChannel({ channel: 'telegram', token: telegramToken })}
-                            disabled={saving || !telegramToken}
+                            disabled={isBusy || whatsappPairing || !telegramToken}
                             className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm disabled:opacity-50"
                         >
                             Save Telegram
                         </button>
                     </div>
-                </div>
+                </ChannelCard>
 
-                <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
-                    <div className="flex items-center justify-between mb-2">
-                        <h4 className="font-semibold text-gray-800">Discord</h4>
-                        <button
-                            type="button"
-                            onClick={() => enablePlugin('discord')}
-                            disabled={saving || pluginEnabled('discord')}
-                            className="text-xs px-2 py-1 rounded border border-gray-300 bg-white disabled:opacity-50"
-                        >
-                            {pluginEnabled('discord') ? 'Plugin enabled' : 'Enable plugin'}
-                        </button>
-                    </div>
+                <ChannelCard title="Discord" pluginId="discord" stateKey="discord">
                     <div className="grid grid-cols-1 gap-2">
                         <input
                             type="password"
@@ -1156,26 +1231,15 @@ const ChannelsTab = () => {
                         <button
                             type="button"
                             onClick={() => addChannel({ channel: 'discord', token: discordToken })}
-                            disabled={saving || !discordToken}
+                            disabled={isBusy || whatsappPairing || !discordToken}
                             className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm disabled:opacity-50"
                         >
                             Save Discord
                         </button>
                     </div>
-                </div>
+                </ChannelCard>
 
-                <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
-                    <div className="flex items-center justify-between mb-2">
-                        <h4 className="font-semibold text-gray-800">Slack</h4>
-                        <button
-                            type="button"
-                            onClick={() => enablePlugin('slack')}
-                            disabled={saving || pluginEnabled('slack')}
-                            className="text-xs px-2 py-1 rounded border border-gray-300 bg-white disabled:opacity-50"
-                        >
-                            {pluginEnabled('slack') ? 'Plugin enabled' : 'Enable plugin'}
-                        </button>
-                    </div>
+                <ChannelCard title="Slack" pluginId="slack" stateKey="slack">
                     <div className="grid grid-cols-1 gap-2">
                         <input
                             type="password"
@@ -1194,70 +1258,29 @@ const ChannelsTab = () => {
                         <button
                             type="button"
                             onClick={() => addChannel({ channel: 'slack', slackBotToken, slackAppToken })}
-                            disabled={saving || (!slackBotToken && !slackAppToken)}
+                            disabled={isBusy || whatsappPairing || (!slackBotToken && !slackAppToken)}
                             className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm disabled:opacity-50"
                         >
                             Save Slack
                         </button>
                     </div>
-                </div>
+                </ChannelCard>
 
-                <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
-                    <div className="flex items-center justify-between mb-2">
-                        <h4 className="font-semibold text-gray-800">WhatsApp</h4>
-                        <button
-                            type="button"
-                            onClick={() => enablePlugin('whatsapp')}
-                            disabled={saving || pluginEnabled('whatsapp')}
-                            className="text-xs px-2 py-1 rounded border border-gray-300 bg-white disabled:opacity-50"
-                        >
-                            {pluginEnabled('whatsapp') ? 'Plugin enabled' : 'Enable plugin'}
-                        </button>
-                    </div>
+                <ChannelCard title="WhatsApp" pluginId="whatsapp" stateKey="whatsapp">
                     <div className="space-y-2">
                         <button
                             type="button"
                             onClick={startWhatsAppLogin}
-                            disabled={saving || whatsappPairing}
+                            disabled={isBusy || whatsappPairing}
                             className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm disabled:opacity-50"
                         >
                             {whatsappPairing ? 'Pairing…' : 'Start pairing (QR)'}
                         </button>
-                        {whatsappQr && (
-                            <div className="border border-gray-200 rounded bg-white p-2 inline-block">
-                                <img src={whatsappQr} alt="WhatsApp QR" className="w-56 h-56" />
-                            </div>
-                        )}
-                        <textarea
-                            value={loginOutput}
-                            readOnly
-                            rows={6}
-                            className="w-full border border-gray-300 rounded-lg p-2 font-mono text-xs bg-white"
-                            placeholder="WhatsApp login output will appear here..."
-                        />
+                        <div className="text-xs text-gray-600">
+                            This will pop a pairing window with a QR code.
+                        </div>
                     </div>
-                </div>
-            </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <div>
-                    <h4 className="font-semibold text-gray-800 mb-2">Current channel status</h4>
-                    <textarea
-                        value={loading ? 'Loading…' : renderStatus()}
-                        readOnly
-                        rows={10}
-                        className="w-full border border-gray-300 rounded-lg p-3 font-mono text-xs bg-white"
-                    />
-                </div>
-                <div>
-                    <h4 className="font-semibold text-gray-800 mb-2">Configured channels</h4>
-                    <textarea
-                        value={loading ? 'Loading…' : renderList()}
-                        readOnly
-                        rows={10}
-                        className="w-full border border-gray-300 rounded-lg p-3 font-mono text-xs bg-white"
-                    />
-                </div>
+                </ChannelCard>
             </div>
 
             {error && <div className="text-sm text-red-600">{error}</div>}

@@ -131,6 +131,28 @@ async function runOpenClawJson(args, options) {
     }
 }
 
+async function restartGatewayCli() {
+    const { code, stdout, stderr } = await runOpenClaw(['gateway', 'restart'], { timeoutMs: 120000 });
+    if (code !== 0) {
+        const err = new Error(`openclaw gateway restart failed with code ${code}`);
+        err.stdout = stdout;
+        err.stderr = stderr;
+        throw err;
+    }
+    return { stdout, stderr };
+}
+
+async function ensurePluginEnabled(pluginId) {
+    const { code, stdout, stderr } = await runOpenClaw(['plugins', 'enable', String(pluginId)], { timeoutMs: 45000 });
+    if (code !== 0) {
+        const err = new Error(`openclaw plugins enable ${pluginId} failed with code ${code}`);
+        err.stdout = stdout;
+        err.stderr = stderr;
+        throw err;
+    }
+    return { stdout, stderr };
+}
+
 function newSessionId() {
     return crypto.randomBytes(16).toString('hex');
 }
@@ -765,11 +787,9 @@ app.post('/api/plugins/enable', async (req, res) => {
     const { id } = req.body || {};
     if (!id) return res.status(400).json({ error: 'Plugin id is required' });
     try {
-        const { code, stdout, stderr } = await runOpenClaw(['plugins', 'enable', String(id)], { timeoutMs: 45000 });
-        if (code !== 0) {
-            return res.status(500).json({ error: `Command failed with code ${code}`, stderr: stderr.slice(0, 2000), stdout: stdout.slice(0, 2000) });
-        }
-        return res.json({ ok: true, stdout, stderr });
+        const enable = await ensurePluginEnabled(id);
+        const restarted = await restartGatewayCli();
+        return res.json({ ok: true, enable, restarted });
     } catch (error) {
         return res.status(500).json({ error: error.message });
     }
@@ -778,11 +798,8 @@ app.post('/api/plugins/enable', async (req, res) => {
 app.post('/api/gateway/restart', async (req, res) => {
     if (!requireApiSecret(req, res)) return;
     try {
-        const { code, stdout, stderr } = await runOpenClaw(['gateway', 'restart'], { timeoutMs: 90000 });
-        if (code !== 0) {
-            return res.status(500).json({ error: `Command failed with code ${code}`, stderr: stderr.slice(0, 2000), stdout: stdout.slice(0, 2000) });
-        }
-        return res.json({ ok: true, stdout, stderr });
+        const restarted = await restartGatewayCli();
+        return res.json({ ok: true, restarted });
     } catch (error) {
         return res.status(500).json({ error: error.message });
     }
@@ -874,11 +891,13 @@ app.post('/api/channels/add', async (req, res) => {
     }
 
     try {
+        const plugin = await ensurePluginEnabled(chan);
         const { code, stdout, stderr } = await runOpenClaw(args, { timeoutMs: 45000 });
         if (code !== 0) {
             return res.status(500).json({ error: `Command failed with code ${code}`, stderr: stderr.slice(0, 2000), stdout: stdout.slice(0, 2000) });
         }
-        return res.json({ ok: true, stdout, stderr });
+        const restarted = await restartGatewayCli();
+        return res.json({ ok: true, plugin, command: { stdout, stderr }, restarted });
     } catch (error) {
         return res.status(500).json({ error: error.message });
     }
@@ -895,7 +914,8 @@ app.post('/api/channels/remove', async (req, res) => {
         if (code !== 0) {
             return res.status(500).json({ error: `Command failed with code ${code}`, stderr: stderr.slice(0, 2000), stdout: stdout.slice(0, 2000) });
         }
-        return res.json({ ok: true, stdout, stderr });
+        const restarted = await restartGatewayCli();
+        return res.json({ ok: true, command: { stdout, stderr }, restarted });
     } catch (error) {
         return res.status(500).json({ error: error.message });
     }
@@ -912,7 +932,8 @@ app.post('/api/channels/logout', async (req, res) => {
         if (code !== 0) {
             return res.status(500).json({ error: `Command failed with code ${code}`, stderr: stderr.slice(0, 2000), stdout: stdout.slice(0, 2000) });
         }
-        return res.json({ ok: true, stdout, stderr });
+        const restarted = await restartGatewayCli();
+        return res.json({ ok: true, command: { stdout, stderr }, restarted });
     } catch (error) {
         return res.status(500).json({ error: error.message });
     }
@@ -922,6 +943,16 @@ app.post('/api/channels/login', async (req, res) => {
     if (!requireApiSecret(req, res)) return;
     const { channel, account, verbose } = req.body || {};
     if (!channel) return res.status(400).json({ error: 'channel is required' });
+
+    const chan = String(channel);
+    if (chan === 'whatsapp') {
+        try {
+            await ensurePluginEnabled('whatsapp');
+            await restartGatewayCli();
+        } catch (error) {
+            return res.status(500).json({ error: error.message });
+        }
+    }
 
     const args = ['channels', 'login', '--channel', String(channel)];
     if (account) args.push('--account', String(account));
