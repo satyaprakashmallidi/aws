@@ -1,13 +1,19 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { apiUrl } from '../lib/apiBase';
-import { Send, CheckCircle, AlertCircle, Loader2 } from 'lucide-react';
+import { Send, Loader2, RefreshCw } from 'lucide-react';
 
 const Broadcast = () => {
     const [agents, setAgents] = useState([]);
     const [selectedAgents, setSelectedAgents] = useState([]);
     const [message, setMessage] = useState('');
     const [sending, setSending] = useState(false);
-    const [results, setResults] = useState(null);
+    const [created, setCreated] = useState([]);
+    const [jobsById, setJobsById] = useState({});
+    const [loadingJobs, setLoadingJobs] = useState(false);
+    const [activityByJobId, setActivityByJobId] = useState({});
+    const [loadingActivity, setLoadingActivity] = useState(false);
+
+    const createdIds = useMemo(() => new Set(created.map(t => t.id)), [created]);
 
     useEffect(() => {
         fetchAgents();
@@ -46,7 +52,8 @@ const Broadcast = () => {
         if (!message.trim() || selectedAgents.length === 0) return;
 
         setSending(true);
-        setResults(null);
+        setCreated([]);
+        setJobsById({});
 
         try {
             const response = await fetch(apiUrl('/api/broadcast'), {
@@ -59,7 +66,8 @@ const Broadcast = () => {
             });
 
             const data = await response.json();
-            setResults(data);
+            if (!response.ok) throw new Error(data?.error || 'Broadcast failed');
+            setCreated(Array.isArray(data.tasks) ? data.tasks : []);
             setMessage('');
         } catch (error) {
             console.error('Broadcast failed:', error);
@@ -67,6 +75,88 @@ const Broadcast = () => {
             setSending(false);
         }
     };
+
+    const fetchJobs = async () => {
+        if (createdIds.size === 0) return;
+        setLoadingJobs(true);
+        try {
+            const response = await fetch(apiUrl(`/api/tasks?t=${Date.now()}`));
+            if (!response.ok) return;
+            const data = await response.json();
+            const jobs = Array.isArray(data.jobs) ? data.jobs : [];
+            const next = {};
+            for (const job of jobs) {
+                if (createdIds.has(job?.id)) next[job.id] = job;
+            }
+            setJobsById(next);
+        } catch {
+            // ignore
+        } finally {
+            setLoadingJobs(false);
+        }
+    };
+
+    const fetchActivity = async () => {
+        if (createdIds.size === 0) return;
+        setLoadingActivity(true);
+        try {
+            const ids = Array.from(createdIds).join(',');
+            const response = await fetch(apiUrl(`/api/tasks/activity?ids=${encodeURIComponent(ids)}&limit=500&t=${Date.now()}`));
+            if (!response.ok) return;
+            const data = await response.json();
+            const items = Array.isArray(data.items) ? data.items : [];
+            const next = {};
+            for (const item of items) {
+                if (item?.jobId) next[item.jobId] = item;
+            }
+            setActivityByJobId(next);
+        } catch {
+            // ignore
+        } finally {
+            setLoadingActivity(false);
+        }
+    };
+
+    useEffect(() => {
+        if (createdIds.size === 0) return;
+        fetchJobs();
+        fetchActivity();
+        const interval = setInterval(() => {
+            fetchJobs();
+            fetchActivity();
+            fetch(apiUrl('/api/heartbeat'), { method: 'POST' }).catch(() => { /* ignore */ });
+        }, 10_000);
+        return () => clearInterval(interval);
+    }, [createdIds]);
+
+    const getStatus = (job) => job?.metadata?.status || job?.status || 'unknown';
+    const statusClass = (status) => {
+        const s = String(status || '').toLowerCase();
+        if (s.includes('completed')) return 'bg-green-100 text-green-700 border-green-200';
+        if (s.includes('picked') || s.includes('active') || s.includes('run')) return 'bg-blue-100 text-blue-700 border-blue-200';
+        if (s.includes('review') || s.includes('failed') || s.includes('error')) return 'bg-red-100 text-red-700 border-red-200';
+        if (s.includes('assigned')) return 'bg-amber-100 text-amber-800 border-amber-200';
+        return 'bg-gray-100 text-gray-700 border-gray-200';
+    };
+
+    const activityLines = useMemo(() => {
+        const lines = [];
+        for (const task of created) {
+            const item = activityByJobId?.[task.id];
+            const root = Array.isArray(item?.lines) ? item.lines : [];
+            for (const l of root.slice(-30)) lines.push(`[${task.agentId}] ${l}`);
+            const changes = Array.isArray(item?.changes) ? item.changes : [];
+            for (const ch of changes.slice(-10)) lines.push(`[${task.agentId}] ${ch.summary}`);
+            const children = Array.isArray(item?.children) ? item.children : [];
+            for (const c of children) {
+                const childLines = Array.isArray(c?.lines) ? c.lines : [];
+                for (const l of childLines.slice(-10)) lines.push(`[${task.agentId} child] ${l}`);
+                const childChanges = Array.isArray(c?.changes) ? c.changes : [];
+                for (const ch of childChanges.slice(-6)) lines.push(`[${task.agentId} child] ${ch.summary}`);
+            }
+        }
+        return lines.slice(-400);
+    }, [created, activityByJobId]);
 
     return (
         <div className="grid grid-cols-12 gap-6 h-[calc(100vh-8rem)]">
@@ -151,68 +241,150 @@ const Broadcast = () => {
             <div className="col-span-8 bg-white rounded-lg shadow p-6 flex flex-col">
                 <h2 className="text-xl font-bold text-gray-800 mb-6">Broadcast Status</h2>
 
-                {!results && !sending && (
+                {!created.length && !sending && (
                     <div className="flex-1 flex flex-col items-center justify-center text-gray-400 border-2 border-dashed border-gray-100 rounded-lg">
                         <Send className="w-12 h-12 mb-4 opacity-20" />
-                        <p>Select agents and send a task to see results here</p>
+                        <p>Select agents and send a task to see progress here</p>
                     </div>
                 )}
 
                 {sending && (
                     <div className="flex-1 flex flex-col items-center justify-center">
                         <Loader2 className="w-12 h-12 text-blue-600 animate-spin mb-4" />
-                        <p className="text-gray-600 font-medium">Dispatching tasks to agents...</p>
+                        <p className="text-gray-600 font-medium">Creating tasks for agents…</p>
                     </div>
                 )}
 
-                {results && (
-                    <div className="flex-1 overflow-y-auto">
-                        <div className="grid grid-cols-3 gap-4 mb-6">
-                            <div className="bg-blue-50 p-4 rounded-lg border border-blue-100 text-center">
-                                <div className="text-2xl font-bold text-blue-600">{results.totalAgents}</div>
-                                <div className="text-xs text-blue-600 font-medium uppercase tracking-wider">Agents Targeted</div>
+                {created.length > 0 && (
+                    <div className="flex-1 overflow-y-auto space-y-6">
+                        <div className="flex items-center justify-between">
+                            <div className="text-sm text-gray-600">
+                                Tracking {created.length} task(s). Agents will pick these up automatically.
                             </div>
-                            <div className="bg-green-50 p-4 rounded-lg border border-green-100 text-center">
-                                <div className="text-2xl font-bold text-green-600">{results.successCount}</div>
-                                <div className="text-xs text-green-600 font-medium uppercase tracking-wider">Successful</div>
-                            </div>
-                            <div className="bg-red-50 p-4 rounded-lg border border-red-100 text-center">
-                                <div className="text-2xl font-bold text-red-600">{results.failureCount}</div>
-                                <div className="text-xs text-red-600 font-medium uppercase tracking-wider">Failed</div>
-                            </div>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    fetchJobs();
+                                    fetchActivity();
+                                }}
+                                disabled={loadingJobs || loadingActivity}
+                                className="text-sm px-3 py-2 rounded border border-gray-200 bg-gray-50 flex items-center gap-2 disabled:opacity-50"
+                            >
+                                <RefreshCw className="w-4 h-4" />
+                                Refresh
+                            </button>
                         </div>
 
-                        <div className="space-y-3">
-                            {results.responses.map((response, index) => (
-                                <div key={index} className="border rounded-lg p-4 bg-gray-50">
-                                    <div className="flex justify-between items-start mb-2">
-                                        <div className="flex items-center gap-2">
-                                            <span className="font-bold text-gray-800">{response.agentId}</span>
-                                            {response.status === 'fulfilled' ? (
-                                                <span className="bg-green-100 text-green-700 text-xs px-2 py-0.5 rounded-full flex items-center gap-1">
-                                                    <CheckCircle className="w-3 h-3" /> Success
-                                                </span>
-                                            ) : (
-                                                <span className="bg-red-100 text-red-700 text-xs px-2 py-0.5 rounded-full flex items-center gap-1">
-                                                    <AlertCircle className="w-3 h-3" /> Failed
-                                                </span>
-                                            )}
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                            {created.map((task) => {
+                                const job = jobsById?.[task.id];
+                                const status = getStatus(job);
+                                const result = job?.metadata?.result;
+                                const item = activityByJobId?.[task.id];
+                                const rootLines = Array.isArray(item?.lines) ? item.lines : [];
+                                const changes = Array.isArray(item?.changes) ? item.changes : [];
+                                const children = Array.isArray(item?.children) ? item.children : [];
+                                return (
+                                    <div key={task.id} className="border rounded-lg p-4 bg-gray-50">
+                                        <div className="flex items-start justify-between gap-3">
+                                            <div>
+                                                <div className="font-semibold text-gray-800">{task.agentId}</div>
+                                                <div className="text-xs text-gray-500 mt-0.5">{task.name || task.id}</div>
+                                            </div>
+                                            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold border ${statusClass(status)}`}>
+                                                {status}
+                                            </span>
                                         </div>
+
+                                        {result && (
+                                            <div className="mt-3 bg-white p-3 rounded border border-gray-200 text-xs font-mono text-gray-800 whitespace-pre-wrap max-h-40 overflow-auto">
+                                                {result}
+                                            </div>
+                                        )}
+
+                                        {rootLines.length > 0 && (
+                                            <div className="mt-3 bg-white p-3 rounded border border-gray-200 text-[11px] font-mono text-gray-700 whitespace-pre-wrap max-h-40 overflow-auto">
+                                                {rootLines.slice(-18).join('\n')}
+                                            </div>
+                                        )}
+
+                                        {changes.length > 0 && (
+                                            <div className="mt-3 bg-white p-3 rounded border border-gray-200">
+                                                <div className="text-[10px] font-semibold text-gray-600 mb-2">Memory changes</div>
+                                                <div className="space-y-2">
+                                                    {changes.slice(-3).map((ch, idx) => (
+                                                        <div key={`${ch.path}-${idx}`} className="border border-gray-100 rounded p-2 bg-gray-50">
+                                                            <div className="text-[10px] font-semibold text-gray-700">
+                                                                {ch.tool}: {ch.path}
+                                                            </div>
+                                                            {ch.preview && (
+                                                                <pre className="mt-1 text-[11px] font-mono text-gray-700 whitespace-pre-wrap max-h-28 overflow-auto">
+                                                                    {ch.preview}
+                                                                </pre>
+                                                            )}
+                                                            {ch.diff && (
+                                                                <pre className="mt-1 text-[11px] font-mono text-gray-700 whitespace-pre-wrap max-h-28 overflow-auto">
+                                                                    {ch.diff}
+                                                                </pre>
+                                                            )}
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {children.map((c) => {
+                                            const childLines = Array.isArray(c?.lines) ? c.lines : [];
+                                            const childChanges = Array.isArray(c?.changes) ? c.changes : [];
+                                            if (!childLines.length) return null;
+                                            return (
+                                                <div key={c.sessionId} className="mt-3 bg-white p-3 rounded border border-gray-200">
+                                                    <div className="text-[10px] font-semibold text-gray-600 mb-2">
+                                                        Delegated session: {c.agentId ? `${c.agentId}:` : ''}{c.sessionId}
+                                                    </div>
+                                                    <pre className="text-[11px] font-mono text-gray-700 whitespace-pre-wrap max-h-32 overflow-auto">
+                                                        {childLines.slice(-12).join('\n')}
+                                                    </pre>
+
+                                                    {childChanges.length > 0 && (
+                                                        <div className="mt-3">
+                                                            <div className="text-[10px] font-semibold text-gray-600 mb-2">Child memory changes</div>
+                                                            <div className="space-y-2">
+                                                                {childChanges.slice(-2).map((ch, idx) => (
+                                                                    <div key={`${ch.path}-${idx}`} className="border border-gray-100 rounded p-2 bg-gray-50">
+                                                                        <div className="text-[10px] font-semibold text-gray-700">
+                                                                            {ch.tool}: {ch.path}
+                                                                        </div>
+                                                                        {ch.preview && (
+                                                                            <pre className="mt-1 text-[11px] font-mono text-gray-700 whitespace-pre-wrap max-h-24 overflow-auto">
+                                                                                {ch.preview}
+                                                                            </pre>
+                                                                        )}
+                                                                        {ch.diff && (
+                                                                            <pre className="mt-1 text-[11px] font-mono text-gray-700 whitespace-pre-wrap max-h-24 overflow-auto">
+                                                                                {ch.diff}
+                                                                            </pre>
+                                                                        )}
+                                                                    </div>
+                                                                ))}
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            );
+                                        })}
                                     </div>
+                                );
+                            })}
+                        </div>
 
-                                    {response.response && (
-                                        <div className="bg-white p-3 rounded border border-gray-200 text-sm font-mono text-gray-700 whitespace-pre-wrap">
-                                            {JSON.stringify(response.response, null, 2)}
-                                        </div>
-                                    )}
-
-                                    {response.error && (
-                                        <div className="text-red-600 text-sm bg-red-50 p-2 rounded">
-                                            Error: {response.error}
-                                        </div>
-                                    )}
-                                </div>
-                            ))}
+                        <div className="border border-gray-200 rounded-lg bg-white">
+                            <div className="px-4 py-2 border-b border-gray-200 text-sm font-semibold text-gray-800">
+                                Agent activity
+                            </div>
+                            <pre className="p-4 text-xs text-gray-700 whitespace-pre-wrap max-h-64 overflow-auto">
+                                {activityLines.length ? activityLines.join('\n') : 'Waiting for agent activity…'}
+                            </pre>
                         </div>
                     </div>
                 )}

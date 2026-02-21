@@ -167,12 +167,14 @@ const formatSessionLabel = (session) => {
 const Chat = () => {
     const agentId = 'main';
     const [sessionKey, setSessionKey] = useState('');
+    const sessionKeyRef = useRef('');
     const [sessions, setSessions] = useState([]);
     const [sessionsLoading, setSessionsLoading] = useState(false);
     const [messages, setMessages] = useState([]);
     const [input, setInput] = useState('');
     const [loading, setLoading] = useState(true);
     const [sending, setSending] = useState(false);
+    const [sessionBooting, setSessionBooting] = useState(false);
     const [errorMessage, setErrorMessage] = useState('');
     const messagesEndRef = useRef(null);
 
@@ -323,6 +325,8 @@ const Chat = () => {
         setSessionKey(nextKey);
         setMessages([]);
         setErrorMessage('');
+        setSessionBooting(true);
+        setTimeout(() => setSessionBooting(false), 5000);
         fetchSessions();
     };
 
@@ -350,7 +354,7 @@ const Chat = () => {
     const handleSend = async (e) => {
         e.preventDefault();
         const text = input.trim();
-        if (!text || sending) return;
+        if (!text || sending || sessionBooting) return;
 
         setSending(true);
         setErrorMessage('');
@@ -362,6 +366,7 @@ const Chat = () => {
         setInput('');
 
         try {
+            const activeSessionKey = sessionKeyRef.current || sessionKey;
             const response = await fetch(apiUrl('/api/chat'), {
                 method: 'POST',
                 headers: {
@@ -371,7 +376,7 @@ const Chat = () => {
                 body: JSON.stringify({
                     message: text,
                     agentId,
-                    sessionId: sessionKey,
+                    sessionId: activeSessionKey,
                     stream: true
                 })
             });
@@ -611,6 +616,10 @@ const Chat = () => {
     }, [agentId]);
 
     useEffect(() => {
+        sessionKeyRef.current = sessionKey;
+    }, [sessionKey]);
+
+    useEffect(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }, [messages, sending]);
 
@@ -653,6 +662,7 @@ const Chat = () => {
                     </div>
                     <button
                         onClick={createNewSession}
+                        disabled={sending || sessionBooting}
                         className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-colors"
                         title="New Session"
                     >
@@ -660,6 +670,7 @@ const Chat = () => {
                     </button>
                     <button
                         onClick={() => fetchHistory(sessionKey)}
+                        disabled={sending || sessionBooting}
                         className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-colors"
                         title="Refresh History"
                     >
@@ -673,6 +684,12 @@ const Chat = () => {
                 {errorMessage && (
                     <div className="bg-red-50 border border-red-200 text-red-700 px-3 py-2 rounded-md text-sm">
                         {errorMessage}
+                    </div>
+                )}
+                {sessionBooting && (
+                    <div className="bg-blue-50 border border-blue-200 text-blue-800 px-3 py-2 rounded-md text-sm flex items-center gap-2">
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        Setting up a new session… please wait a few seconds.
                     </div>
                 )}
                 {loading ? (
@@ -779,11 +796,11 @@ const Chat = () => {
                         onChange={(e) => setInput(e.target.value)}
                         placeholder="Type your message..."
                         className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
-                        disabled={sending}
+                        disabled={sending || sessionBooting}
                     />
                     <button
                         type="submit"
-                        disabled={!input.trim() || sending}
+                        disabled={!input.trim() || sending || sessionBooting}
                         className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
                     >
                         <Send className="w-4 h-4" />

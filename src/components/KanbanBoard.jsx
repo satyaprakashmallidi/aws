@@ -13,9 +13,15 @@ const COLUMNS = [
 const KanbanBoard = () => {
     const [tasks, setTasks] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [saving, setSaving] = useState(false);
 
     useEffect(() => {
         fetchTasks();
+        const interval = setInterval(() => {
+            fetchTasks();
+            fetch(apiUrl('/api/heartbeat'), { method: 'POST' }).catch(() => { /* ignore */ });
+        }, 60_000);
+        return () => clearInterval(interval);
     }, []);
 
     const fetchTasks = async () => {
@@ -36,14 +42,30 @@ const KanbanBoard = () => {
         return task?.metadata?.status || task?.status || '';
     };
 
+    const formatSchedule = (task) => {
+        const s = task?.schedule;
+        if (!s || typeof s !== 'object') return 'unknown';
+        const kind = s.kind || 'unknown';
+        if (kind === 'cron') return `cron: ${s.expr}`;
+        if (kind === 'every') {
+            const ms = Number(s.everyMs);
+            if (!Number.isFinite(ms) || ms <= 0) return 'every';
+            const mins = Math.round(ms / 60000);
+            if (mins % 60 === 0) return `every ${mins / 60}h`;
+            return `every ${mins}m`;
+        }
+        if (kind === 'at') return `at: ${String(s.at || '').replace('.000Z', 'Z')}`;
+        return kind;
+    };
+
     const getColumnTasks = (columnId) => {
         const byStatus = (status) => tasks.filter(t => getTaskStatus(t) === status);
 
         if (columnId === 'done') return byStatus('completed');
         if (columnId === 'review') return byStatus('review');
-        if (columnId === 'active') return byStatus('picked_up').concat(tasks.filter(t => t.enabled && !getTaskStatus(t)));
-        if (columnId === 'assigned') return byStatus('assigned');
-        if (columnId === 'inbox') return tasks.filter(t => !t.enabled && !getTaskStatus(t));
+        if (columnId === 'active') return byStatus('picked_up');
+        if (columnId === 'assigned') return byStatus('assigned').concat(byStatus('run_requested')).concat(byStatus('scheduled'));
+        if (columnId === 'inbox') return byStatus('disabled');
         return [];
     };
 
@@ -70,6 +92,41 @@ const KanbanBoard = () => {
         }
     };
 
+    const handleRun = async (taskId) => {
+        try {
+            await fetch(apiUrl(`/api/tasks/${encodeURIComponent(taskId)}/run`), { method: 'POST' });
+            fetchTasks();
+        } catch (error) {
+            console.error('Failed to run task:', error);
+        }
+    };
+
+    const handleCreateTask = async () => {
+        const message = prompt('Task instructions:');
+        if (!message || !message.trim()) return;
+        const rawPriority = prompt('Priority (1=low, 5=high):', '3') || '3';
+        const priority = Math.max(1, Math.min(5, Number(rawPriority) || 3));
+        setSaving(true);
+        try {
+            await fetch(apiUrl('/api/tasks'), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    name: `Task: ${message.trim().slice(0, 60)}${message.trim().length > 60 ? '…' : ''}`,
+                    payload: { message, agentId: 'main', source: 'kanban' },
+                    metadata: { priority, status: 'assigned' },
+                    enabled: true,
+                    schedule: { expr: 'manual' }
+                })
+            });
+            fetchTasks();
+        } catch (error) {
+            console.error('Failed to create task:', error);
+        } finally {
+            setSaving(false);
+        }
+    };
+
     if (loading) {
         return (
             <div className="flex items-center justify-center h-full">
@@ -89,9 +146,13 @@ const KanbanBoard = () => {
                     <button className="px-3 py-1.5 bg-white border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50 shadow-sm">
                         Filter
                     </button>
-                    <button className="px-3 py-1.5 bg-blue-600 text-white rounded-md text-sm font-medium hover:bg-blue-700 shadow-sm flex items-center gap-1">
+                    <button
+                        onClick={handleCreateTask}
+                        disabled={saving}
+                        className="px-3 py-1.5 bg-blue-600 text-white rounded-md text-sm font-medium hover:bg-blue-700 shadow-sm flex items-center gap-1 disabled:opacity-50"
+                    >
                         <Plus className="w-4 h-4" />
-                        New Task
+                        {saving ? 'Creating…' : 'New Task'}
                     </button>
                 </div>
             </div>
@@ -125,7 +186,11 @@ const KanbanBoard = () => {
                                                 <h4 className="font-medium text-gray-800 text-sm line-clamp-2">
                                                     {task.name}
                                                 </h4>
-                                                <button className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-blue-600 transition-opacity">
+                                                <button
+                                                    onClick={() => handleRun(task.id)}
+                                                    className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-blue-600 transition-opacity"
+                                                    title="Run"
+                                                >
                                                     <Play className="w-3 h-3" />
                                                 </button>
                                             </div>
@@ -136,8 +201,13 @@ const KanbanBoard = () => {
 
                                             <div className="flex items-center gap-2 flex-wrap">
                                                 <span className="bg-blue-50 text-blue-700 text-[10px] px-1.5 py-0.5 rounded border border-blue-100">
-                                                    {task.schedule?.expr || 'Manual'}
+                                                    {formatSchedule(task)}
                                                 </span>
+                                                {task?.metadata?.priority && (
+                                                    <span className="bg-gray-100 text-gray-700 text-[10px] px-1.5 py-0.5 rounded border border-gray-200">
+                                                        p{task.metadata.priority}
+                                                    </span>
+                                                )}
                                                 {task.sessionTarget && (
                                                     <span className="bg-purple-50 text-purple-700 text-[10px] px-1.5 py-0.5 rounded border border-purple-100">
                                                         {task.sessionTarget}

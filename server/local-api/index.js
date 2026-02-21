@@ -202,6 +202,341 @@ function readSessionHistoryFromDisk(sessionKey, { limit = 50, includeTools = fal
     return { messages: sliced, total };
 }
 
+function parseAgentIdFromSessionKey(sessionKey) {
+    const s = String(sessionKey || '');
+    const m = s.match(/^agent:([^:]+):/);
+    return m ? m[1] : null;
+}
+
+function parseSessionKeyParts(sessionKey) {
+    const s = String(sessionKey || '').trim();
+    if (!s.startsWith('agent:')) return null;
+    const parts = s.split(':');
+    if (parts.length < 4) return null;
+    const agentId = parts[1];
+    const sessionId = parts[parts.length - 1];
+    return { agentId, sessionId, sessionKey: s };
+}
+
+function listAgentIdsOnDisk() {
+    try {
+        const agentsDir = path.join(OPENCLAW_DIR, 'agents');
+        if (!fs.existsSync(agentsDir)) return [];
+        return fs.readdirSync(agentsDir, { withFileTypes: true })
+            .filter(d => d.isDirectory())
+            .map(d => d.name)
+            .filter(Boolean);
+    } catch {
+        return [];
+    }
+}
+
+function findSessionJsonlPath({ sessionId, agentId } = {}) {
+    const id = String(sessionId || '').trim();
+    if (!id) return null;
+
+    const candidates = [];
+    if (agentId) {
+        candidates.push(path.join(OPENCLAW_DIR, 'agents', String(agentId), 'sessions', `${id}.jsonl`));
+    }
+    for (const a of listAgentIdsOnDisk()) {
+        if (a === agentId) continue;
+        candidates.push(path.join(OPENCLAW_DIR, 'agents', a, 'sessions', `${id}.jsonl`));
+    }
+    for (const p of candidates) {
+        try {
+            if (p && fs.existsSync(p)) return p;
+        } catch {
+            // ignore
+        }
+    }
+    return null;
+}
+
+function extractUuidsDeep(value, out = new Set()) {
+    if (!value) return out;
+    if (typeof value === 'string') {
+        const m = String(value).match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/ig);
+        if (m) for (const id of m) out.add(id);
+        return out;
+    }
+    if (Array.isArray(value)) {
+        for (const v of value) extractUuidsDeep(v, out);
+        return out;
+    }
+    if (typeof value === 'object') {
+        for (const v of Object.values(value)) extractUuidsDeep(v, out);
+        return out;
+    }
+    return out;
+}
+
+function extractSessionKeysDeep(value, out = new Set()) {
+    if (!value) return out;
+    if (typeof value === 'string') {
+        const m = String(value).match(/agent:[^:\s]+:[^:\s]+:[^:\s]+/g);
+        if (m) for (const k of m) out.add(k);
+        return out;
+    }
+    if (Array.isArray(value)) {
+        for (const v of value) extractSessionKeysDeep(v, out);
+        return out;
+    }
+    if (typeof value === 'object') {
+        for (const v of Object.values(value)) extractSessionKeysDeep(v, out);
+        return out;
+    }
+    return out;
+}
+
+function coerceToolArgs(args) {
+    if (!args) return null;
+    if (typeof args === 'string') {
+        const parsed = parseJsonLoose(args);
+        return parsed && typeof parsed === 'object' ? parsed : { value: args };
+    }
+    if (typeof args === 'object') return args;
+    return { value: args };
+}
+
+function clipText(text, maxChars = 2000) {
+    const s = String(text || '');
+    if (!s) return '';
+    return s.length > maxChars ? `${s.slice(0, maxChars - 1)}…` : s;
+}
+
+function simpleUnifiedDiff(oldText, newText, { context = 2, maxLines = 120 } = {}) {
+    const a = String(oldText ?? '').split(/\r?\n/);
+    const b = String(newText ?? '').split(/\r?\n/);
+    let start = 0;
+    while (start < a.length && start < b.length && a[start] === b[start]) start += 1;
+
+    let endA = a.length - 1;
+    let endB = b.length - 1;
+    while (endA >= start && endB >= start && a[endA] === b[endB]) {
+        endA -= 1;
+        endB -= 1;
+    }
+
+    const beforeStart = Math.max(0, start - context);
+    const afterEndA = Math.min(a.length, endA + 1 + context);
+    const afterEndB = Math.min(b.length, endB + 1 + context);
+
+    const removed = a.slice(start, endA + 1);
+    const added = b.slice(start, endB + 1);
+    const before = a.slice(beforeStart, start);
+    const after = a.slice(endA + 1, afterEndA);
+
+    const header = `@@ -${start + 1},${removed.length} +${start + 1},${added.length} @@`;
+    const out = [header];
+    for (const line of before) out.push(` ${line}`);
+    for (const line of removed) out.push(`-${line}`);
+    for (const line of added) out.push(`+${line}`);
+    for (const line of after) out.push(` ${line}`);
+
+    return out.slice(0, maxLines).join('\n');
+}
+
+function extractFileChangesFromEvents(events, { pathPrefix = 'memory/', maxItems = 50 } = {}) {
+    const changes = [];
+    const add = (change) => {
+        if (!change?.path) return;
+        if (pathPrefix && !String(change.path).startsWith(pathPrefix)) return;
+        changes.push(change);
+    };
+
+    for (const ev of Array.isArray(events) ? events : []) {
+        const ts = ev?.timestamp || ev?.ts || null;
+        const msg = ev?.message;
+        if (!msg) continue;
+        const content = msg?.content;
+        const parts = Array.isArray(content) ? content : [];
+
+        for (const part of parts) {
+            if (!part || typeof part !== 'object') continue;
+            const type = part.type || part.kind;
+            if (type !== 'toolCall') continue;
+
+            const name = String(part.name || part.tool || part.toolName || '').trim();
+            if (!name) continue;
+            if (name !== 'write' && name !== 'edit') continue;
+
+            const args = coerceToolArgs(part.arguments);
+            const p = args?.path || args?.file_path || args?.filePath || args?.target || args?.to;
+            const filePath = typeof p === 'string' ? p : null;
+            if (!filePath) continue;
+
+            if (name === 'write') {
+                const body = args?.content ?? args?.text ?? args?.data ?? '';
+                add({
+                    ts,
+                    tool: 'write',
+                    path: filePath,
+                    summary: `write ${filePath} (${String(body).length} chars)`,
+                    preview: clipText(body, 2000)
+                });
+            }
+
+            if (name === 'edit') {
+                const oldText = args?.oldText ?? args?.old_text ?? args?.before ?? args?.old;
+                const newText = args?.newText ?? args?.new_text ?? args?.after ?? args?.new;
+                const patch = args?.patch ?? args?.input;
+                const diff = (typeof patch === 'string' && patch.trim())
+                    ? patch
+                    : (typeof oldText === 'string' || typeof newText === 'string')
+                        ? simpleUnifiedDiff(oldText || '', newText || '')
+                        : '';
+
+                add({
+                    ts,
+                    tool: 'edit',
+                    path: filePath,
+                    summary: `edit ${filePath}`,
+                    diff: clipText(diff, 4000)
+                });
+            }
+        }
+
+        if (changes.length >= maxItems) break;
+    }
+
+    return changes;
+}
+
+function readSessionJsonlById({ sessionId, agentId, limit = 400 } = {}) {
+    const filePath = findSessionJsonlPath({ sessionId, agentId });
+    if (!filePath) return { filePath: null, events: [], total: 0 };
+    const raw = fs.readFileSync(filePath, 'utf8');
+    const lines = raw.split(/\r?\n/).filter(Boolean);
+    const parsed = [];
+    for (const line of lines) {
+        const obj = parseJsonLoose(line);
+        if (obj && typeof obj === 'object') parsed.push(obj);
+    }
+    const total = parsed.length;
+    const sliced = limit > 0 ? parsed.slice(Math.max(0, total - limit)) : parsed;
+    return { filePath, events: sliced, total };
+}
+
+function summarizeSessionActivity(events, { hideThinking = true, showToolArgs = true, maxLineLen = 500, defaultAgentId = 'main' } = {}) {
+    const lines = [];
+    const toolCalls = new Map();
+    const spawnCallIds = new Set();
+    const spawnCalls = new Map(); // callId -> { agentId }
+    const childSessions = new Map(); // key -> { agentId, sessionId, sessionKey? }
+
+    const push = (s) => {
+        const t = String(s || '').trim();
+        if (!t) return;
+        const clipped = t.length > maxLineLen ? `${t.slice(0, maxLineLen - 1)}…` : t;
+        lines.push(clipped);
+    };
+
+    for (const ev of Array.isArray(events) ? events : []) {
+        const ts = ev?.timestamp || ev?.ts;
+        const msg = ev?.message;
+        const role = msg?.role;
+        const content = msg?.content;
+        const prefix = ts ? `[${new Date(ts).toISOString()}] ` : '';
+
+        const handlePart = (part) => {
+            if (!part || typeof part !== 'object') return;
+            const type = part.type || part.kind;
+            if (type === 'thinking' && hideThinking) return;
+            if (type === 'text' && typeof part.text === 'string') push(`${prefix}${role || 'assistant'}: ${part.text}`);
+
+            if (type === 'toolCall') {
+                const name = part.name || part.tool || part.toolName;
+                const id = part.id || part.callId || part.toolCallId;
+                const args = part.arguments;
+                if (id) toolCalls.set(String(id), { name, args });
+                if (String(name) === 'sessions_spawn' && id) {
+                    spawnCallIds.add(String(id));
+                    const targetAgent = args && typeof args === 'object'
+                        ? (args.agentId || args.agent || null)
+                        : null;
+                    spawnCalls.set(String(id), { agentId: targetAgent ? String(targetAgent) : null });
+                }
+                if (showToolArgs) push(`${prefix}tool: ${String(name || 'unknown')} ${args !== undefined ? JSON.stringify(args) : ''}`);
+                else push(`${prefix}tool: ${String(name || 'unknown')}`);
+            }
+
+            if (type === 'toolResult' || type === 'tool_result') {
+                const id = part.id || part.callId || part.toolCallId;
+                const forCall = id ? toolCalls.get(String(id)) : null;
+                if (forCall && String(forCall.name) === 'sessions_spawn' && id) {
+                    const payload = part.output || part.result || part.value || part.content || part;
+                    const keys = extractSessionKeysDeep(payload);
+                    for (const k of keys) {
+                        const parsed = parseSessionKeyParts(k);
+                        if (parsed?.agentId && parsed?.sessionId) {
+                            childSessions.set(`${parsed.agentId}:${parsed.sessionId}`, parsed);
+                        }
+                    }
+
+                    if (childSessions.size === 0) {
+                        // Fallback: some outputs only include a raw session UUID.
+                        const ids = extractUuidsDeep(payload);
+                        const spawn = spawnCalls.get(String(id)) || {};
+                        const agent = spawn.agentId || defaultAgentId;
+                        for (const sid of ids) {
+                            const sessionId = String(sid || '').trim();
+                            if (!sessionId) continue;
+                            childSessions.set(`${agent}:${sessionId}`, { agentId: agent, sessionId });
+                        }
+                    }
+                }
+            }
+        };
+
+        if (typeof content === 'string') {
+            if (role === 'assistant' || role === 'user') push(`${prefix}${role}: ${content}`);
+            continue;
+        }
+
+        if (Array.isArray(content)) {
+            for (const part of content) handlePart(part);
+            continue;
+        }
+
+        if (content && typeof content === 'object') {
+            // Some events store tool calls/results as objects directly.
+            handlePart(content);
+        }
+    }
+
+    // Also scan toolResult-style messages for sessions_spawn child sessionIds/keys.
+    for (const ev of Array.isArray(events) ? events : []) {
+        const msg = ev?.message;
+        const role = msg?.role;
+        if (role !== 'tool' && role !== 'toolResult' && role !== 'tool_result') continue;
+        const content = msg?.content;
+        const toolCallId = msg?.toolCallId || msg?.tool_call_id || ev?.toolCallId;
+        if (toolCallId && spawnCallIds.has(String(toolCallId))) {
+            const keys = extractSessionKeysDeep(content);
+            for (const k of keys) {
+                const parsed = parseSessionKeyParts(k);
+                if (parsed?.agentId && parsed?.sessionId) {
+                    childSessions.set(`${parsed.agentId}:${parsed.sessionId}`, parsed);
+                }
+            }
+
+            if (keys.size === 0) {
+                const spawn = spawnCalls.get(String(toolCallId)) || {};
+                const agent = spawn.agentId || defaultAgentId;
+                const ids = extractUuidsDeep(content);
+                for (const sid of ids) {
+                    const sessionId = String(sid || '').trim();
+                    if (!sessionId) continue;
+                    childSessions.set(`${agent}:${sessionId}`, { agentId: agent, sessionId });
+                }
+            }
+        }
+    }
+
+    return { lines: lines.slice(-800), childSessions: Array.from(childSessions.values()) };
+}
+
 function takeRecentSessionsWithMain(sessions, { agentId = 'main', limit = 30 } = {}) {
     const list = Array.isArray(sessions) ? sessions.filter(Boolean) : [];
     const mainKey = `agent:${agentId}:main`;
@@ -479,6 +814,552 @@ async function invokeTool(tool, args = {}) {
         throw new Error(`Tools API error (${response.status}): ${text}`);
     }
     return response.json();
+}
+
+const HEARTBEAT_PATH = path.join(OPENCLAW_DIR, 'heartbeat.json');
+let lastHeartbeat = null;
+try {
+    if (fs.existsSync(HEARTBEAT_PATH)) {
+        const raw = fs.readFileSync(HEARTBEAT_PATH, 'utf8');
+        const parsed = JSON.parse(raw);
+        lastHeartbeat = parsed?.ts || parsed?.timestamp || null;
+    }
+} catch {
+    // ignore
+}
+
+function recordHeartbeat(ts = new Date().toISOString()) {
+    lastHeartbeat = ts;
+    try {
+        fs.mkdirSync(path.dirname(HEARTBEAT_PATH), { recursive: true });
+        fs.writeFileSync(HEARTBEAT_PATH, JSON.stringify({ ts }, null, 2), 'utf8');
+    } catch {
+        // ignore
+    }
+    return ts;
+}
+
+const CRON_JOBS_PATH = path.join(OPENCLAW_DIR, 'cron', 'jobs.json');
+const TASK_META_PATH = path.join(OPENCLAW_DIR, 'cron', 'tasks-meta.json');
+
+function readCronJobsFile() {
+    try {
+        if (!fs.existsSync(CRON_JOBS_PATH)) return { version: 1, jobs: [] };
+        const raw = fs.readFileSync(CRON_JOBS_PATH, 'utf8');
+        const parsed = JSON.parse(raw);
+        const jobs = Array.isArray(parsed?.jobs) ? parsed.jobs : [];
+        return { ...(parsed || {}), version: parsed?.version || 1, jobs };
+    } catch {
+        return { version: 1, jobs: [] };
+    }
+}
+
+function writeCronJobsFile(next) {
+    fs.mkdirSync(path.dirname(CRON_JOBS_PATH), { recursive: true });
+    fs.writeFileSync(CRON_JOBS_PATH, JSON.stringify(next, null, 2), 'utf8');
+}
+
+function mergeJobPatch(job, patch) {
+    const next = { ...(job || {}), ...(patch || {}) };
+    if (job?.payload || patch?.payload) next.payload = { ...(job?.payload || {}), ...(patch?.payload || {}) };
+    if (job?.metadata || patch?.metadata) next.metadata = { ...(job?.metadata || {}), ...(patch?.metadata || {}) };
+    if (job?.schedule || patch?.schedule) next.schedule = { ...(job?.schedule || {}), ...(patch?.schedule || {}) };
+    return next;
+}
+
+function readTaskMetaFile() {
+    try {
+        if (!fs.existsSync(TASK_META_PATH)) return {};
+        const raw = fs.readFileSync(TASK_META_PATH, 'utf8');
+        const parsed = JSON.parse(raw);
+        return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch {
+        return {};
+    }
+}
+
+function writeTaskMetaFile(next) {
+    try {
+        fs.mkdirSync(path.dirname(TASK_META_PATH), { recursive: true });
+        fs.writeFileSync(TASK_META_PATH, JSON.stringify(next || {}, null, 2), 'utf8');
+    } catch {
+        // ignore
+    }
+}
+
+function upsertTaskMeta(jobId, patch) {
+    const id = String(jobId);
+    const current = readTaskMetaFile();
+    const prev = (current && typeof current === 'object' ? current[id] : null) || {};
+    const next = {
+        ...prev,
+        ...(patch || {}),
+        priority: normalizePriority(patch?.priority ?? prev?.priority ?? 3),
+        updatedAt: new Date().toISOString()
+    };
+    const merged = { ...(current || {}), [id]: next };
+    writeTaskMetaFile(merged);
+    return next;
+}
+
+function deleteTaskMeta(jobId) {
+    const id = String(jobId);
+    const current = readTaskMetaFile();
+    if (!current || typeof current !== 'object' || !(id in current)) return;
+    const next = { ...current };
+    delete next[id];
+    writeTaskMetaFile(next);
+}
+
+function getTaskMeta(jobId) {
+    const id = String(jobId);
+    const current = readTaskMetaFile();
+    const entry = current && typeof current === 'object' ? current[id] : null;
+    return entry && typeof entry === 'object' ? entry : null;
+}
+
+function appendTaskLog(jobId, line) {
+    const id = String(jobId);
+    const meta = getTaskMeta(id) || {};
+    const prev = Array.isArray(meta?.log) ? meta.log : [];
+    const text = String(line || '').trim();
+    const nextLog = text ? [...prev, `[${new Date().toISOString()}] ${text}`].slice(-200) : prev;
+    return upsertTaskMeta(id, { ...meta, log: nextLog });
+}
+
+async function cronCliList() {
+    const parsed = await runOpenClawJson(['cron', 'list', '--all', '--json'], { timeoutMs: 20000 });
+    return Array.isArray(parsed?.jobs) ? parsed.jobs : [];
+}
+
+async function cronCliAdd({ agentId, name, message, sessionTarget = 'isolated', atIso = '2099-01-01T00:00:00Z', disabled = true } = {}) {
+    const args = [
+        'cron',
+        'add',
+        '--name',
+        String(name || `Task: ${summarizeMessage(message)}`),
+        '--session',
+        String(sessionTarget || 'isolated'),
+        '--agent',
+        String(agentId || 'main'),
+        '--message',
+        String(message || ''),
+        '--at',
+        String(atIso),
+        '--keep-after-run',
+        '--no-deliver',
+        '--json'
+    ];
+    if (disabled) args.push('--disabled');
+    return runOpenClawJson(args, { timeoutMs: 30000 });
+}
+
+async function cronCliRm(jobId) {
+    return runOpenClawJson(['cron', 'rm', String(jobId), '--json'], { timeoutMs: 30000 });
+}
+
+async function cronCliRun(jobId) {
+    const attempts = [
+        ['cron', 'run', String(jobId), '--expect-final'],
+        ['cron', 'run', String(jobId)]
+    ];
+    let last = null;
+    for (const args of attempts) {
+        try {
+            const { code, stdout, stderr } = await runOpenClaw(args, { timeoutMs: 120000 });
+            if (code !== 0) {
+                const err = new Error(`openclaw ${args.join(' ')} failed with code ${code}`);
+                err.stdout = stdout;
+                err.stderr = stderr;
+                throw err;
+            }
+            return parseToolOutputJson(stdout, stderr) || { stdout, stderr };
+        } catch (e) {
+            last = e;
+        }
+    }
+    throw last || new Error('cron run failed');
+}
+
+async function cronCliRuns({ jobId, limit = 50 } = {}) {
+    const args = ['cron', 'runs', '--limit', String(limit)];
+    if (jobId) args.push('--id', String(jobId));
+    const parsed = await runOpenClawJson(args, { timeoutMs: 30000 });
+    return Array.isArray(parsed?.entries) ? parsed.entries : [];
+}
+
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function cronInvoke(args) {
+    const attempts = [
+        { tool: 'cron', payload: args },
+        { tool: 'cron', payload: { command: args.action, ...args } }
+    ];
+    let lastErr = null;
+    for (const attempt of attempts) {
+        try {
+            return await invokeTool(attempt.tool, attempt.payload);
+        } catch (e) {
+            lastErr = e;
+        }
+    }
+    throw lastErr || new Error('cron invoke failed');
+}
+
+async function cronList() {
+    // 1) CLI (authoritative)
+    try {
+        const jobs = await cronCliList();
+        if (Array.isArray(jobs)) return jobs;
+    } catch {
+        // ignore
+    }
+
+    // 2) Gateway tool (best-effort)
+    try {
+        const response = await cronInvoke({ action: 'list' });
+        const details = response?.result?.details || {};
+        const jobs = details.jobs || response.jobs || [];
+        if (Array.isArray(jobs)) return jobs;
+    } catch {
+        // ignore
+    }
+
+    // 3) Disk
+    return readCronJobsFile().jobs;
+}
+
+async function cronAdd(job) {
+    // 1) Gateway tool
+    try {
+        const response = await cronInvoke({ action: 'add', job });
+        const createdId =
+            response?.result?.details?.job?.id
+            || response?.result?.details?.id
+            || response?.job?.id
+            || response?.id
+            || job?.id;
+        return { ok: true, id: createdId, response, source: 'tool' };
+    } catch {
+        // ignore
+    }
+
+    // 2) Disk
+    const current = readCronJobsFile();
+    const jobs = Array.isArray(current.jobs) ? current.jobs : [];
+    const id = job?.id || crypto.randomUUID();
+    const nextJob = { ...(job || {}), id };
+    writeCronJobsFile({ ...current, jobs: [...jobs, nextJob] });
+    return { ok: true, id, source: 'disk' };
+}
+
+async function cronEdit(jobId, patch) {
+    // 1) Gateway tool (prefer edit)
+    const actions = ['edit', 'update'];
+    for (const action of actions) {
+        try {
+            const response = await cronInvoke({ action, jobId, updates: patch, patch });
+            return { ok: true, response, source: 'tool', action };
+        } catch {
+            // ignore
+        }
+    }
+
+    // 2) Disk
+    const current = readCronJobsFile();
+    const jobs = Array.isArray(current.jobs) ? current.jobs : [];
+    const idx = jobs.findIndex(j => String(j?.id) === String(jobId));
+    if (idx === -1) return { ok: false, error: 'Task not found', source: 'disk' };
+    const nextJobs = [...jobs];
+    nextJobs[idx] = mergeJobPatch(nextJobs[idx], patch);
+    writeCronJobsFile({ ...current, jobs: nextJobs });
+    return { ok: true, source: 'disk' };
+}
+
+async function cronRm(jobId) {
+    // 1) CLI
+    try {
+        const response = await cronCliRm(jobId);
+        return { ok: true, response, source: 'cli' };
+    } catch {
+        // ignore
+    }
+
+    // 2) Gateway tool
+    const actions = ['rm', 'delete', 'remove'];
+    for (const action of actions) {
+        try {
+            const response = await cronInvoke({ action, jobId });
+            return { ok: true, response, source: 'tool', action };
+        } catch {
+            // ignore
+        }
+    }
+
+    // 3) Disk
+    const current = readCronJobsFile();
+    const jobs = Array.isArray(current.jobs) ? current.jobs : [];
+    const nextJobs = jobs.filter(j => String(j?.id) !== String(jobId));
+    if (nextJobs.length === jobs.length) return { ok: false, error: 'Task not found', source: 'disk' };
+    writeCronJobsFile({ ...current, jobs: nextJobs });
+    return { ok: true, source: 'disk' };
+}
+
+async function listCronJobs({ includeDisabled = true } = {}) {
+    const jobs = await cronList();
+    const metaMap = readTaskMetaFile();
+    const merged = (Array.isArray(jobs) ? jobs : [])
+        .filter(j => j?.payload?.kind === 'agentTurn')
+        .map(j => {
+            const meta = (metaMap && typeof metaMap === 'object') ? metaMap[String(j?.id)] : null;
+            const base = meta && typeof meta === 'object' ? meta : {};
+
+            if (!meta) {
+                const last = j?.state?.lastStatus;
+                let status = j?.enabled === false ? 'disabled' : 'scheduled';
+                if (String(last).toLowerCase() === 'ok') status = 'completed';
+                else if (last) status = 'review';
+
+                return {
+                    ...j,
+                    metadata: {
+                        status,
+                        priority: 3,
+                        createdAt: new Date(j?.createdAtMs || Date.now()).toISOString(),
+                        updatedAt: new Date(j?.updatedAtMs || j?.createdAtMs || Date.now()).toISOString(),
+                        pickedUpAt: null,
+                        completedAt: null,
+                        result: null,
+                        error: null,
+                        log: []
+                    }
+                };
+            }
+
+            return {
+                ...j,
+                metadata: {
+                    status: base.status || 'assigned',
+                    priority: normalizePriority(base.priority ?? 3),
+                    createdAt: base.createdAt || new Date(j?.createdAtMs || Date.now()).toISOString(),
+                    updatedAt: base.updatedAt || new Date(j?.updatedAtMs || Date.now()).toISOString(),
+                    pickedUpAt: base.pickedUpAt || null,
+                    completedAt: base.completedAt || null,
+                    result: base.result ?? null,
+                    error: base.error ?? null,
+                    log: Array.isArray(base.log) ? base.log : []
+                }
+            };
+        });
+    const filtered = includeDisabled ? merged : merged.filter(j => j?.enabled !== false);
+    return filtered;
+}
+
+async function getCronJob(jobId) {
+    const jobs = await listCronJobs({ includeDisabled: true });
+    return jobs.find(j => String(j?.id) === String(jobId)) || null;
+}
+
+async function updateCronJob(jobId, updates) {
+    return cronEdit(jobId, updates);
+}
+
+function normalizePriority(value) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return 3;
+    return Math.max(1, Math.min(5, Math.round(n)));
+}
+
+function jobPriority(job) {
+    const p = job?.metadata?.priority ?? job?.priority;
+    return normalizePriority(p);
+}
+
+function coerceTimeMs(value) {
+    if (!value) return 0;
+    if (typeof value === 'number') return value;
+    const n = Number(value);
+    if (Number.isFinite(n) && n > 0) return n;
+    const t = Date.parse(String(value));
+    return Number.isNaN(t) ? 0 : t;
+}
+
+function summarizeMessage(message) {
+    const s = String(message || '').trim().replace(/\s+/g, ' ');
+    if (!s) return 'New task';
+    return s.length > 60 ? `${s.slice(0, 57)}...` : s;
+}
+
+function buildTaskJob({ message, agentId = 'main', priority = 3, source = 'ui', name } = {}) {
+    const safeAgent = String(agentId || 'main');
+    const title = name || `Task: ${summarizeMessage(message)}`;
+    return {
+        agentId: safeAgent,
+        name: title,
+        payload: {
+            message: String(message || ''),
+            source
+        },
+        metadata: {
+            status: 'assigned',
+            priority: normalizePriority(priority),
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            log: []
+        }
+    };
+}
+
+async function createTask({ message, agentId = 'main', priority = 3, source = 'ui', name, autoRun = true } = {}) {
+    const spec = buildTaskJob({ message, agentId, priority, source, name });
+    const job = await cronCliAdd({
+        agentId: spec.agentId,
+        name: spec.name,
+        message: spec.payload.message,
+        sessionTarget: 'isolated',
+        atIso: '2099-01-01T00:00:00Z',
+        disabled: true
+    });
+
+    const id = String(job?.id);
+    const createdAt = new Date(job?.createdAtMs || Date.now()).toISOString();
+    upsertTaskMeta(id, {
+        status: autoRun ? 'run_requested' : 'assigned',
+        priority: spec?.metadata?.priority ?? priority,
+        source,
+        createdAt,
+        agentId: job?.agentId || spec.agentId,
+        name: job?.name || spec.name,
+        message: spec.payload.message,
+        log: []
+    });
+    appendTaskLog(id, `Created (source=${source}, agent=${job?.agentId || spec.agentId})`);
+    if (autoRun) appendTaskLog(id, 'Run requested');
+
+    if (autoRun) {
+        setTimeout(() => {
+            taskWorkerTick().catch(() => { /* ignore */ });
+        }, 250);
+    }
+
+    return { id, job };
+}
+
+function appendJobLog(job, line) {
+    const text = String(line || '').trim();
+    if (!text) return job?.metadata?.log || [];
+    const prev = Array.isArray(job?.metadata?.log) ? job.metadata.log : [];
+    const next = [...prev, `[${new Date().toISOString()}] ${text}`].slice(-200);
+    return next;
+}
+
+function extractCompletionText(data) {
+    const choice = data?.choices?.[0];
+    const msg = choice?.message;
+    const content = msg?.content ?? choice?.delta?.content ?? data?.content;
+    if (Array.isArray(content)) {
+        return content.map((c) => (typeof c === 'string' ? c : (c?.text || JSON.stringify(c)))).join('');
+    }
+    if (typeof content === 'string') return content;
+    if (content && typeof content === 'object') return JSON.stringify(content, null, 2);
+    return '';
+}
+
+async function runAgentTask({ agentId = 'main', sessionId, message }) {
+    const payload = {
+        model: `openclaw:${agentId}`,
+        user: sessionId || `agent:${agentId}:task`,
+        messages: [{ role: 'user', content: String(message || '') }],
+        stream: false
+    };
+    const response = await fetch(`${GATEWAY_URL.replace(/\/$/, '')}/v1/chat/completions`, {
+        method: 'POST',
+        headers: {
+            'Authorization': `Bearer ${GATEWAY_TOKEN}`,
+            'Content-Type': 'application/json',
+            ...(agentId !== 'main' ? { 'x-openclaw-agent-id': agentId } : {}),
+            ...(sessionId ? { 'x-openclaw-session-key': sessionId } : {})
+        },
+        body: JSON.stringify(payload)
+    });
+    const text = await response.text();
+    if (!response.ok) {
+        throw new Error(`Agent call failed (${response.status}): ${text.slice(0, 500)}`);
+    }
+    const parsed = parseJsonLoose(text) || {};
+    const content = extractCompletionText(parsed) || text;
+    return { raw: parsed, content: String(content || '').trim() };
+}
+
+function shouldAutoCreateTaskFromChat(message) {
+    const s = String(message || '').trim().toLowerCase();
+    return s.startsWith('task:') || s.startsWith('/task');
+}
+
+async function autoCreateTaskFromChat({ message, agentId = 'main' }) {
+    try {
+        const raw = String(message || '').trim();
+        if (!shouldAutoCreateTaskFromChat(raw)) return;
+        const stripped = raw.replace(/^task:\s*/i, '').replace(/^\/task\s*/i, '').trim();
+        if (!stripped) return;
+        await createTask({ message: stripped, agentId, priority: 3, source: 'chat', autoRun: true });
+    } catch {
+        // ignore
+    }
+}
+
+async function inferTaskSpecFromMessage(message) {
+    const text = String(message || '').trim();
+    if (!text) return null;
+
+    const system = [
+        'You are a task router for an AI agent system.',
+        'Decide if the user message should be captured as a background task.',
+        'Return ONLY valid JSON (no markdown).',
+        'Schema:',
+        '{"createTask":boolean,"title":string,"priority":1|2|3|4|5,"agentId"?:string}',
+        'Set createTask=false for greetings, chit-chat, or questions that do not require work.',
+        'If createTask=true, choose a short title and a reasonable priority (3 default).'
+    ].join('\n');
+
+    try {
+        const payload = {
+            model: 'openclaw:main',
+            user: `agent:main:task-router:${crypto.randomUUID()}`,
+            messages: [
+                { role: 'system', content: system },
+                { role: 'user', content: text }
+            ],
+            stream: false
+        };
+
+        const response = await fetch(`${GATEWAY_URL.replace(/\/$/, '')}/v1/chat/completions`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${GATEWAY_TOKEN}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(payload)
+        });
+        const raw = await response.text();
+        if (!response.ok) return null;
+        const parsed = parseJsonLoose(raw) || {};
+        const assistantText = extractCompletionText(parsed) || raw;
+        const spec = parseJsonLoose(assistantText);
+        if (!spec || typeof spec !== 'object') return null;
+        if (typeof spec.createTask !== 'boolean') return null;
+        if (!spec.createTask) return { createTask: false };
+        return {
+            createTask: true,
+            title: typeof spec.title === 'string' && spec.title.trim() ? spec.title.trim() : undefined,
+            priority: normalizePriority(spec.priority),
+            agentId: typeof spec.agentId === 'string' && spec.agentId.trim() ? spec.agentId.trim() : undefined
+        };
+    } catch {
+        return null;
+    }
 }
 
 app.get('/api/health', async (req, res) => {
@@ -1316,6 +2197,14 @@ app.post('/api/chat', async (req, res) => {
     try {
         const { message, agentId = 'main', sessionId, stream } = req.body || {};
         if (!message) return res.status(400).json({ error: 'Message required' });
+
+        // Fire-and-forget: if a chat message looks like an actionable task request, capture it as a task.
+        if (shouldAutoCreateTaskFromChat(message)) {
+            setTimeout(() => {
+                autoCreateTaskFromChat({ message, agentId }).catch(() => { /* ignore */ });
+            }, 0);
+        }
+
         const payload = {
             model: `openclaw:${agentId}`,
             user: sessionId || `user:local`,
@@ -1422,9 +2311,7 @@ app.get('/api/chat', async (req, res) => {
 
 app.get('/api/tasks', async (req, res) => {
     try {
-        const response = await invokeTool('cron', { action: 'list', includeDisabled: true });
-        const details = response?.result?.details || {};
-        const jobs = details.jobs || response.jobs || [];
+        const jobs = await listCronJobs({ includeDisabled: true });
         res.json({ jobs });
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -1433,8 +2320,179 @@ app.get('/api/tasks', async (req, res) => {
 
 app.post('/api/tasks', async (req, res) => {
     try {
-        const response = await invokeTool('cron', { action: 'add', job: req.body });
-        res.json(response);
+        const input = req.body || {};
+        const message = input?.payload?.message ?? input?.message ?? input?.payload ?? input?.name;
+        if (!message) return res.status(400).json({ error: 'message is required' });
+        const agentId = input?.payload?.agentId ?? input?.agentId ?? 'main';
+        const priority = input?.metadata?.priority ?? input?.priority ?? 3;
+        const source = input?.payload?.source ?? 'ui';
+        const name = input?.name;
+
+        const created = await createTask({ message, agentId, priority, source, name, autoRun: true });
+        const merged = await getCronJob(created.id);
+        res.json({ ok: true, id: created.id, job: merged || created.job });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.put('/api/tasks/:id', async (req, res) => {
+    try {
+        const jobId = req.params.id;
+        const current = await getCronJob(jobId);
+        if (!current) return res.status(404).json({ error: 'Task not found' });
+
+        const updates = req.body || {};
+        const next = upsertTaskMeta(jobId, {
+            ...(getTaskMeta(jobId) || {}),
+            ...(updates?.metadata || {}),
+            ...(typeof updates?.priority !== 'undefined' ? { priority: updates.priority } : {}),
+            ...(typeof updates?.status === 'string' ? { status: updates.status } : {}),
+            ...(typeof updates?.name === 'string' ? { name: updates.name } : {}),
+            ...(typeof updates?.message === 'string' ? { message: updates.message } : {})
+        });
+        res.json({ ok: true, metadata: next });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.delete('/api/tasks/:id', async (req, res) => {
+    const jobId = req.params.id;
+    try {
+        const result = await cronRm(jobId);
+        if (!result.ok) return res.status(404).json({ error: result.error || 'Task not found' });
+        deleteTaskMeta(jobId);
+        return res.json({ ok: true, source: result.source, response: result.response });
+    } catch (error) {
+        return res.status(500).json({ error: error.message });
+    }
+});
+
+app.get('/api/tasks/queue', async (req, res) => {
+    try {
+        const jobs = await listCronJobs({ includeDisabled: true });
+        const runnable = jobs
+            .filter(j => {
+                const st = j?.metadata?.status;
+                return st === 'assigned' || st === 'run_requested';
+            })
+            .sort((a, b) => {
+                const pa = jobPriority(a);
+                const pb = jobPriority(b);
+                if (pb !== pa) return pb - pa;
+                return coerceTimeMs(b?.metadata?.updatedAt || b?.updatedAt) - coerceTimeMs(a?.metadata?.updatedAt || a?.updatedAt);
+            });
+        res.json({ jobs: runnable });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.get('/api/tasks/runs', async (req, res) => {
+    try {
+        const jobId = req.query?.id ? String(req.query.id) : null;
+        const limitRaw = req.query?.limit ? Number(req.query.limit) : 50;
+        const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(500, Math.floor(limitRaw))) : 50;
+        const entries = await cronCliRuns({ jobId, limit });
+        res.json({ entries });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.get('/api/tasks/activity', async (req, res) => {
+    try {
+        const idsRaw = String(req.query?.ids || '').trim();
+        const ids = idsRaw
+            ? idsRaw.split(',').map(s => s.trim()).filter(Boolean).slice(0, 50)
+            : [];
+        if (ids.length === 0) return res.json({ items: [] });
+
+        const limitRaw = req.query?.limit ? Number(req.query.limit) : 400;
+        const limit = Number.isFinite(limitRaw) ? Math.max(50, Math.min(2000, Math.floor(limitRaw))) : 400;
+        const includeChildren = String(req.query?.includeChildren || 'true') !== 'false';
+
+        const runs = await cronCliRuns({ limit: 500 });
+        const latest = new Map();
+        for (const entry of runs) {
+            const jobId = String(entry?.jobId || '');
+            if (!jobId || !ids.includes(jobId)) continue;
+            const prev = latest.get(jobId);
+            const ts = Number(entry?.ts || 0);
+            if (!prev || ts > Number(prev?.ts || 0)) latest.set(jobId, entry);
+        }
+
+        const items = [];
+        for (const jobId of ids) {
+            const entry = latest.get(jobId) || null;
+            const sessionId = entry?.sessionId ? String(entry.sessionId) : null;
+            const agentId = parseAgentIdFromSessionKey(entry?.sessionKey) || null;
+            if (!sessionId) {
+                items.push({ jobId, sessionId: null, agentId, lines: [], children: [], error: 'No run sessionId found yet' });
+                continue;
+            }
+
+            const root = readSessionJsonlById({ sessionId, agentId, limit });
+            const rootSummary = summarizeSessionActivity(root.events, { hideThinking: true, showToolArgs: true, defaultAgentId: agentId || 'main' });
+            const rootChanges = extractFileChangesFromEvents(root.events, { pathPrefix: 'memory/' });
+
+            const children = [];
+            if (includeChildren) {
+                for (const childRef of (rootSummary.childSessions || []).slice(0, 5)) {
+                    const child = readSessionJsonlById({ sessionId: childRef.sessionId, agentId: childRef.agentId, limit: Math.min(300, limit) });
+                    const childSummary = summarizeSessionActivity(child.events, { hideThinking: true, showToolArgs: true, defaultAgentId: childRef.agentId || 'main' });
+                    const childChanges = extractFileChangesFromEvents(child.events, { pathPrefix: 'memory/' });
+                    children.push({ sessionId: childRef.sessionId, agentId: childRef.agentId || null, sessionKey: childRef.sessionKey || null, lines: childSummary.lines, changes: childChanges });
+                }
+            }
+
+            items.push({
+                jobId,
+                agentId,
+                sessionId,
+                lines: rootSummary.lines,
+                children,
+                changes: rootChanges
+            });
+        }
+
+        res.json({ items });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.get('/api/tasks/:id/activity', async (req, res) => {
+    try {
+        const jobId = String(req.params.id || '').trim();
+        if (!jobId) return res.status(400).json({ error: 'id is required' });
+
+        const limitRaw = req.query?.limit ? Number(req.query.limit) : 400;
+        const limit = Number.isFinite(limitRaw) ? Math.max(50, Math.min(2000, Math.floor(limitRaw))) : 400;
+        const includeChildren = String(req.query?.includeChildren || 'true') !== 'false';
+
+        const entries = await cronCliRuns({ jobId, limit: 1 });
+        const entry = entries?.[0] || null;
+        const sessionId = entry?.sessionId ? String(entry.sessionId) : null;
+        const agentId = parseAgentIdFromSessionKey(entry?.sessionKey) || null;
+        if (!sessionId) return res.json({ jobId, sessionId: null, agentId, lines: [], children: [], error: 'No run sessionId found yet' });
+
+        const root = readSessionJsonlById({ sessionId, agentId, limit });
+        const rootSummary = summarizeSessionActivity(root.events, { hideThinking: true, showToolArgs: true, defaultAgentId: agentId || 'main' });
+        const rootChanges = extractFileChangesFromEvents(root.events, { pathPrefix: 'memory/' });
+
+        const children = [];
+        if (includeChildren) {
+            for (const childRef of (rootSummary.childSessions || []).slice(0, 5)) {
+                const child = readSessionJsonlById({ sessionId: childRef.sessionId, agentId: childRef.agentId, limit: Math.min(300, limit) });
+                const childSummary = summarizeSessionActivity(child.events, { hideThinking: true, showToolArgs: true, defaultAgentId: childRef.agentId || 'main' });
+                const childChanges = extractFileChangesFromEvents(child.events, { pathPrefix: 'memory/' });
+                children.push({ sessionId: childRef.sessionId, agentId: childRef.agentId || null, sessionKey: childRef.sessionKey || null, lines: childSummary.lines, changes: childChanges });
+            }
+        }
+
+        res.json({ jobId, agentId, sessionId, lines: rootSummary.lines, children, changes: rootChanges });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
@@ -1442,8 +2500,20 @@ app.post('/api/tasks', async (req, res) => {
 
 app.post('/api/tasks/:id/run', async (req, res) => {
     try {
-        const response = await invokeTool('cron', { action: 'run', jobId: req.params.id });
-        res.json(response);
+        const jobId = req.params.id;
+        const current = await getCronJob(jobId);
+        if (!current) return res.status(404).json({ error: 'Task not found' });
+
+        upsertTaskMeta(jobId, {
+            ...(getTaskMeta(jobId) || {}),
+            status: 'run_requested'
+        });
+        appendTaskLog(jobId, 'Run requested');
+        setTimeout(() => {
+            taskWorkerTick().catch(() => { /* ignore */ });
+        }, 100);
+
+        res.json({ ok: true });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
@@ -1451,17 +2521,16 @@ app.post('/api/tasks/:id/run', async (req, res) => {
 
 app.post('/api/tasks/:id/pickup', async (req, res) => {
     try {
-        const response = await invokeTool('cron', {
-            action: 'update',
-            jobId: req.params.id,
-            updates: {
-                metadata: {
-                    status: 'picked_up',
-                    pickedUpAt: new Date().toISOString()
-                }
-            }
+        const jobId = req.params.id;
+        const current = await getCronJob(jobId);
+        if (!current) return res.status(404).json({ error: 'Task not found' });
+        upsertTaskMeta(jobId, {
+            ...(getTaskMeta(jobId) || {}),
+            status: 'picked_up',
+            pickedUpAt: new Date().toISOString()
         });
-        res.json(response);
+        appendTaskLog(jobId, 'Picked up');
+        res.json({ ok: true });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
@@ -1469,22 +2538,163 @@ app.post('/api/tasks/:id/pickup', async (req, res) => {
 
 app.post('/api/tasks/:id/complete', async (req, res) => {
     try {
-        const response = await invokeTool('cron', {
-            action: 'update',
-            jobId: req.params.id,
-            updates: {
-                metadata: {
-                    status: 'completed',
-                    completedAt: new Date().toISOString(),
-                    result: req.body?.result || null
-                }
-            }
+        const jobId = req.params.id;
+        const current = await getCronJob(jobId);
+        if (!current) return res.status(404).json({ error: 'Task not found' });
+        upsertTaskMeta(jobId, {
+            ...(getTaskMeta(jobId) || {}),
+            status: 'completed',
+            completedAt: new Date().toISOString(),
+            result: req.body?.result || current?.metadata?.result || null
         });
-        res.json(response);
+        appendTaskLog(jobId, 'Completed');
+        res.json({ ok: true });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
 });
+
+app.get('/api/heartbeat', (req, res) => {
+    return res.json({ ts: lastHeartbeat });
+});
+
+app.post('/api/heartbeat', (req, res) => {
+    const ts = recordHeartbeat();
+    return res.json({ ok: true, ts });
+});
+
+app.post('/api/broadcast', async (req, res) => {
+    try {
+        const { message, agentIds } = req.body || {};
+        if (!message || !Array.isArray(agentIds) || agentIds.length === 0) {
+            return res.status(400).json({ error: 'message and agentIds are required' });
+        }
+
+        const created = [];
+        for (const agentId of agentIds) {
+            const t = await createTask({ message, agentId, priority: 4, source: 'broadcast', autoRun: true });
+            const merged = await getCronJob(t.id);
+            created.push({ agentId, id: t.id, name: merged?.name || t.job?.name || 'Task' });
+        }
+
+        res.json({
+            ok: true,
+            totalAgents: agentIds.length,
+            tasks: created
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+const TASK_WORKER_ENABLED = process.env.TASK_WORKER_ENABLED !== 'false';
+const TASK_WORKER_INTERVAL_MS = process.env.TASK_WORKER_INTERVAL_MS
+    ? Number(process.env.TASK_WORKER_INTERVAL_MS)
+    : 15_000;
+
+let taskWorkerRunning = false;
+
+async function taskWorkerTick() {
+    if (!TASK_WORKER_ENABLED) return;
+    if (taskWorkerRunning) return;
+    taskWorkerRunning = true;
+
+    try {
+        recordHeartbeat();
+        const allJobs = await cronList();
+        const metaMap = readTaskMetaFile();
+        const queue = (Array.isArray(allJobs) ? allJobs : [])
+            .filter(j => j?.payload?.kind === 'agentTurn')
+            .filter(j => {
+                const meta = metaMap && typeof metaMap === 'object' ? metaMap[String(j?.id)] : null;
+                const st = meta?.status;
+                return st === 'assigned' || st === 'run_requested';
+            })
+            .sort((a, b) => {
+                const ma = metaMap[String(a?.id)] || {};
+                const mb = metaMap[String(b?.id)] || {};
+                const pa = normalizePriority(ma?.priority ?? 3);
+                const pb = normalizePriority(mb?.priority ?? 3);
+                if (pb !== pa) return pb - pa;
+                return coerceTimeMs(mb?.updatedAt) - coerceTimeMs(ma?.updatedAt);
+            });
+
+        if (queue.length === 0) return;
+        const job = queue[0];
+        const jobId = job.id;
+        const agentId = job?.agentId || 'main';
+
+        upsertTaskMeta(jobId, {
+            ...(getTaskMeta(jobId) || {}),
+            status: 'picked_up',
+            pickedUpAt: new Date().toISOString(),
+            error: null
+        });
+        appendTaskLog(jobId, `Worker picked up (agent=${agentId})`);
+
+        let resultText = '';
+        let runStatus = 'ok';
+        try {
+            await cronCliRun(jobId);
+
+            // `cron run` only returns {ok,ran}; agent text is in `cron runs`.
+            for (let i = 0; i < 6; i += 1) {
+                const entries = await cronCliRuns({ jobId, limit: 1 });
+                const entry = entries?.[0];
+                if (entry && String(entry?.action) === 'finished') {
+                    runStatus = String(entry?.status || 'ok');
+                    resultText = String(entry?.summary || '').trim();
+                    break;
+                }
+                await sleep(500);
+            }
+
+            if (!resultText) {
+                const entries = await cronCliRuns({ jobId, limit: 1 });
+                const entry = entries?.[0];
+                runStatus = String(entry?.status || runStatus);
+                resultText = String(entry?.summary || '').trim();
+            }
+
+            if (!resultText) {
+                resultText = 'Completed (no summary returned)';
+            }
+        } catch (err) {
+            const msg = err?.message || String(err);
+            upsertTaskMeta(jobId, {
+                ...(getTaskMeta(jobId) || {}),
+                status: 'review',
+                error: msg
+            });
+            appendTaskLog(jobId, `Error: ${msg}`);
+            return;
+        }
+
+        upsertTaskMeta(jobId, {
+            ...(getTaskMeta(jobId) || {}),
+            status: String(runStatus).toLowerCase() === 'ok' ? 'completed' : 'review',
+            completedAt: new Date().toISOString(),
+            result: resultText,
+            error: String(runStatus).toLowerCase() === 'ok' ? null : runStatus
+        });
+        appendTaskLog(jobId, 'Worker completed');
+        const resultPreview = resultText ? resultText.replace(/\s+/g, ' ').slice(0, 200) : '';
+        if (resultPreview) appendTaskLog(jobId, `Result: ${resultPreview}${resultText.length > 200 ? '…' : ''}`);
+    } catch {
+        // ignore
+    } finally {
+        taskWorkerRunning = false;
+    }
+}
+
+if (TASK_WORKER_ENABLED) {
+    setInterval(() => {
+        taskWorkerTick().catch(() => { /* ignore */ });
+    }, Math.max(5_000, TASK_WORKER_INTERVAL_MS));
+    setTimeout(() => {
+        taskWorkerTick().catch(() => { /* ignore */ });
+    }, 2500);
+}
 
 const PORT = process.env.LOCAL_API_PORT ? Number(process.env.LOCAL_API_PORT) : 3333;
 app.listen(PORT, '127.0.0.1', () => {
