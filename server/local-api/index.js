@@ -43,6 +43,41 @@ function resolveOpenClawCliPath() {
 
 const OPENCLAW_CLI = resolveOpenClawCliPath();
 
+function parseJsonLoose(value) {
+    if (!value || typeof value !== 'string') return null;
+    const text = value.trim();
+    if (!text) return null;
+    try {
+        return JSON.parse(text);
+    } catch {
+        // ignore
+    }
+
+    const startIndexes = [];
+    for (let i = 0; i < text.length; i += 1) {
+        const ch = text[i];
+        if (ch === '{' || ch === '[') startIndexes.push(i);
+    }
+    for (let i = startIndexes.length - 1; i >= 0; i -= 1) {
+        const start = startIndexes[i];
+        const candidate = text.slice(start).trim();
+        try {
+            return JSON.parse(candidate);
+        } catch {
+            // ignore
+        }
+    }
+    return null;
+}
+
+function parseToolOutputJson(stdout, stderr) {
+    const parsedStdout = parseJsonLoose(stdout);
+    if (parsedStdout !== null) return parsedStdout;
+    const parsedStderr = parseJsonLoose(stderr);
+    if (parsedStderr !== null) return parsedStderr;
+    return null;
+}
+
 const ALLOWED_PROVIDERS = new Set([
     'google-antigravity',
     'openai',
@@ -787,16 +822,26 @@ app.put('/api/workspace-file', (req, res) => {
 
 app.get('/api/plugins', async (req, res) => {
     try {
-        const { code, stdout, stderr } = await runOpenClaw(['plugins'], { timeoutMs: 20000 });
-        if (code !== 0) {
-            return res.status(500).json({ error: `Command failed with code ${code}`, stderr: stderr.slice(0, 2000) });
+        const attempts = [
+            { source: 'plugins.list --json', args: ['plugins', 'list', '--json'] },
+            { source: 'plugins.list', args: ['plugins', 'list'] },
+            { source: 'plugins', args: ['plugins'] }
+        ];
+        let last = null;
+        for (const attempt of attempts) {
+            const { code, stdout, stderr } = await runOpenClaw(attempt.args, { timeoutMs: 20000 });
+            if (code !== 0) {
+                last = { code, stdout, stderr, source: attempt.source };
+                continue;
+            }
+            const parsed = parseToolOutputJson(stdout, stderr);
+            return res.json({ ok: true, source: attempt.source, ...(parsed ? { parsed } : {}), ...(stdout ? { stdout } : {}), ...(stderr ? { stderr } : {}) });
         }
-        try {
-            const parsed = JSON.parse(stdout);
-            return res.json({ ok: true, parsed, stdout });
-        } catch {
-            return res.json({ ok: true, stdout });
-        }
+        return res.status(500).json({
+            error: `Command failed${last?.source ? ` (${last.source})` : ''}`,
+            stderr: last?.stderr?.slice(0, 2000),
+            stdout: last?.stdout?.slice(0, 2000)
+        });
     } catch (error) {
         return res.status(500).json({ error: error.message });
     }
@@ -837,12 +882,9 @@ app.get('/api/channels/status', async (req, res) => {
         try {
             const { code, stdout, stderr } = await runOpenClaw(attempt.args, { timeoutMs: attempt.timeoutMs });
             if (code !== 0) throw Object.assign(new Error(`Command failed (${attempt.source})`), { stderr, stdout, code });
-            try {
-                const parsed = JSON.parse(stdout);
-                return res.json({ ok: true, source: attempt.source, parsed });
-            } catch {
-                return res.json({ ok: true, source: attempt.source, stdout });
-            }
+            const parsed = parseToolOutputJson(stdout, stderr);
+            if (parsed) return res.json({ ok: true, source: attempt.source, parsed });
+            return res.json({ ok: true, source: attempt.source, stdout, stderr });
         } catch (error) {
             lastError = error;
         }
@@ -860,12 +902,9 @@ app.get('/api/channels/list', async (req, res) => {
         try {
             const { code, stdout, stderr } = await runOpenClaw(attempt.args, { timeoutMs: 15000 });
             if (code !== 0) throw Object.assign(new Error(`Command failed (${attempt.source})`), { stderr, stdout, code });
-            try {
-                const parsed = JSON.parse(stdout);
-                return res.json({ ok: true, source: attempt.source, parsed });
-            } catch {
-                return res.json({ ok: true, source: attempt.source, stdout });
-            }
+            const parsed = parseToolOutputJson(stdout, stderr);
+            if (parsed) return res.json({ ok: true, source: attempt.source, parsed });
+            return res.json({ ok: true, source: attempt.source, stdout, stderr });
         } catch (error) {
             lastError = error;
         }

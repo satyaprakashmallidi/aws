@@ -1147,8 +1147,13 @@ const ChannelsTab = () => {
         const summary = parsed?.channelSummary;
         if (Array.isArray(summary)) {
             for (const item of summary) {
-                if (!item || typeof item !== 'object') continue;
                 const target = String(channelId).toLowerCase();
+                if (typeof item === 'string') {
+                    const lower = item.toLowerCase();
+                    if (lower.includes(target)) pushState(item);
+                    continue;
+                }
+                if (!item || typeof item !== 'object') continue;
                 const ch = String(item.channel || item.provider || item.kind || '').toLowerCase();
                 if (ch === target) {
                     pushState(item);
@@ -1164,7 +1169,7 @@ const ChannelsTab = () => {
     const classifyState = (state) => {
         const normalized = String(state || 'unknown').toLowerCase();
         const ok = ['connected', 'ready', 'online', 'linked', 'ok'].some(s => normalized.includes(s));
-        const mid = ['connecting', 'auth', 'pair', 'login', 'sync', 'starting', 'initializing'].some(s => normalized.includes(s));
+        const mid = ['configured', 'enabled', 'connecting', 'auth', 'pair', 'login', 'sync', 'starting', 'initializing'].some(s => normalized.includes(s));
         return { ok, mid, normalized };
     };
 
