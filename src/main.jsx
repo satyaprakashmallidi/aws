@@ -27,8 +27,6 @@ createRoot(document.getElementById('root')).render(
     <ClerkProvider
       publishableKey={PUBLISHABLE_KEY}
       afterSignOutUrl="/"
-      afterSignInUrl="/app"
-      afterSignUpUrl="/app"
       appearance={clerkAppearance}
     >
       <App />

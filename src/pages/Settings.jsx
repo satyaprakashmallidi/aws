@@ -891,6 +891,12 @@ const ChannelsTab = () => {
     const [saving, setSaving] = useState(false);
     const [busyMessage, setBusyMessage] = useState('');
 
+    const [editMode, setEditMode] = useState({
+        telegram: false,
+        discord: false,
+        slack: false
+    });
+
     const [telegramToken, setTelegramToken] = useState('');
     const [discordToken, setDiscordToken] = useState('');
     const [slackBotToken, setSlackBotToken] = useState('');
@@ -932,21 +938,51 @@ const ChannelsTab = () => {
                 fetch(apiUrl('/api/channels/list')).catch(() => null)
             ]);
 
+            const readJson = async (res) => {
+                if (!res) return null;
+                const text = await res.text().catch(() => '');
+                if (!text) return null;
+                try {
+                    return JSON.parse(text);
+                } catch {
+                    return { stdout: text };
+                }
+            };
+
+            const [pluginsData, statusData, listData] = await Promise.all([
+                readJson(pluginsRes),
+                readJson(statusRes),
+                readJson(listRes)
+            ]);
+
+            if (pluginsRes && !pluginsRes.ok) {
+                setError(pluginsData?.error || 'Failed to load plugins');
+            }
+
+            if (statusRes && !statusRes.ok) {
+                setError(prev => prev || statusData?.error || 'Failed to load channel status');
+            }
+
+            if (listRes && !listRes.ok) {
+                setError(prev => prev || listData?.error || 'Failed to load channel list');
+            }
+
             if (pluginsRes?.ok) {
-                const data = await pluginsRes.json();
-                const parsed = data.parsed;
-                const nextPlugins = Array.isArray(parsed?.plugins) ? parsed.plugins : Array.isArray(parsed) ? parsed : [];
+                const parsed = pluginsData?.parsed;
+                const nextPlugins = Array.isArray(parsed?.plugins)
+                    ? parsed.plugins
+                    : Array.isArray(parsed)
+                        ? parsed
+                        : [];
                 setPlugins(nextPlugins);
             }
 
             if (statusRes?.ok) {
-                const data = await statusRes.json();
-                setChannelStatus(data);
+                setChannelStatus(statusData);
             }
 
             if (listRes?.ok) {
-                const data = await listRes.json();
-                setChannelList(data);
+                setChannelList(listData);
             }
         } catch (e) {
             setError(e.message);
@@ -991,6 +1027,18 @@ const ChannelsTab = () => {
             });
             const data = await res.json().catch(() => ({}));
             if (!res.ok) throw new Error(data.error || 'Failed to add/update channel');
+
+            const channel = payload?.channel;
+            if (channel === 'telegram') setTelegramToken('');
+            if (channel === 'discord') setDiscordToken('');
+            if (channel === 'slack') {
+                setSlackBotToken('');
+                setSlackAppToken('');
+            }
+            if (channel && editMode[channel] !== undefined) {
+                setEditMode(prev => ({ ...prev, [channel]: false }));
+            }
+
             setStatus(`${payload.channel} saved. Gateway restarted.`);
             await loadAll();
         }).catch((e) => setError(e.message));
@@ -1044,31 +1092,99 @@ const ChannelsTab = () => {
         }
     };
 
-    const channelStates = useMemo(() => {
-        const parsed = channelStatus?.parsed;
-        if (!parsed || typeof parsed !== 'object') return {};
-        const raw = parsed?.channels && typeof parsed.channels === 'object' ? parsed.channels : {};
-        const out = {};
-        for (const [key, value] of Object.entries(raw)) {
-            if (!value || typeof value !== 'object') {
-                out[key] = { state: String(value || 'unknown') };
-                continue;
+    const getCandidateStates = (parsed, channelId) => {
+        if (!parsed || typeof parsed !== 'object') return [];
+
+        const states = [];
+
+        const pushState = (value) => {
+            if (value === undefined || value === null) return;
+            if (typeof value === 'string') {
+                states.push(value);
+                return;
             }
-            const state =
-                value.state
-                || value.status
-                || value.connectionState
-                || (value.connected ? 'connected' : '')
-                || 'unknown';
-            out[key] = { state: String(state), raw: value };
+            if (typeof value === 'object') {
+                const state =
+                    value.state
+                    || value.status
+                    || value.connectionState
+                    || value.phase
+                    || (value.connected ? 'connected' : '')
+                    || (value.ready ? 'ready' : '')
+                    || '';
+                if (state) states.push(String(state));
+            }
+        };
+
+        const channelsObj = parsed?.channels;
+        if (channelsObj && typeof channelsObj === 'object' && !Array.isArray(channelsObj)) {
+            for (const [key, value] of Object.entries(channelsObj)) {
+                const matchKey = String(key || '').toLowerCase();
+                const matchObj = value && typeof value === 'object'
+                    ? String(value.channel || value.provider || value.kind || '').toLowerCase()
+                    : '';
+                const target = String(channelId).toLowerCase();
+                if (matchKey === target || matchKey.startsWith(`${target}:`) || matchKey.includes(`${target}`) || matchObj === target) {
+                    pushState(value);
+                }
+            }
         }
-        return out;
-    }, [channelStatus]);
+
+        const accountsObj = parsed?.channelAccounts;
+        if (accountsObj && typeof accountsObj === 'object' && !Array.isArray(accountsObj)) {
+            for (const [key, value] of Object.entries(accountsObj)) {
+                const matchKey = String(key || '').toLowerCase();
+                const matchObj = value && typeof value === 'object'
+                    ? String(value.channel || value.provider || value.kind || '').toLowerCase()
+                    : '';
+                const target = String(channelId).toLowerCase();
+                if (matchKey === target || matchKey.startsWith(`${target}:`) || matchKey.includes(`${target}`) || matchObj === target) {
+                    pushState(value);
+                }
+            }
+        }
+
+        const summary = parsed?.channelSummary;
+        if (Array.isArray(summary)) {
+            for (const item of summary) {
+                if (!item || typeof item !== 'object') continue;
+                const target = String(channelId).toLowerCase();
+                const ch = String(item.channel || item.provider || item.kind || '').toLowerCase();
+                if (ch === target) {
+                    pushState(item);
+                    pushState(item.state);
+                    pushState(item.status);
+                }
+            }
+        }
+
+        return states;
+    };
+
+    const classifyState = (state) => {
+        const normalized = String(state || 'unknown').toLowerCase();
+        const ok = ['connected', 'ready', 'online', 'linked', 'ok'].some(s => normalized.includes(s));
+        const mid = ['connecting', 'auth', 'pair', 'login', 'sync', 'starting', 'initializing'].some(s => normalized.includes(s));
+        return { ok, mid, normalized };
+    };
+
+    const getAggregateState = (channelId) => {
+        const candidates = [
+            ...getCandidateStates(channelStatus?.parsed, channelId),
+            ...getCandidateStates(channelList?.parsed, channelId)
+        ].filter(Boolean);
+
+        if (!candidates.length) return '';
+        const scored = candidates.map(s => ({
+            s,
+            c: classifyState(s)
+        }));
+        const best = scored.find(x => x.c.ok) || scored.find(x => x.c.mid) || scored[0];
+        return best?.s || '';
+    };
 
     const renderStatePill = (state) => {
-        const normalized = String(state || 'unknown').toLowerCase();
-        const ok = ['connected', 'ready', 'online', 'linked'].some(s => normalized.includes(s));
-        const mid = ['connecting', 'auth', 'pair', 'login', 'sync'].some(s => normalized.includes(s));
+        const { ok, mid } = classifyState(state);
         const className = ok
             ? 'bg-green-100 text-green-700 border-green-200'
             : mid
@@ -1082,9 +1198,11 @@ const ChannelsTab = () => {
         );
     };
 
-    const ChannelCard = ({ title, pluginId, stateKey, children }) => {
+    const ChannelCard = ({ title, pluginId, children }) => {
         const pluginOn = pluginEnabled(pluginId);
-        const state = channelStates?.[stateKey]?.state || (pluginOn ? 'enabled' : 'disabled');
+        const rawState = getAggregateState(pluginId);
+        const state = rawState || (pluginOn ? 'enabled' : 'disabled');
+        const connected = classifyState(state).ok;
         return (
             <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
                 <div className="flex items-center justify-between mb-2">
@@ -1101,7 +1219,7 @@ const ChannelsTab = () => {
                         {pluginOn ? 'Plugin enabled' : 'Enable plugin'}
                     </button>
                 </div>
-                {children}
+                {typeof children === 'function' ? children({ state, connected }) : children}
             </div>
         );
     };
@@ -1199,87 +1317,154 @@ const ChannelsTab = () => {
             )}
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <ChannelCard title="Telegram" pluginId="telegram" stateKey="telegram">
-                    <div className="grid grid-cols-1 gap-2">
-                        <input
-                            type="password"
-                            value={telegramToken}
-                            onChange={(e) => setTelegramToken(e.target.value)}
-                            className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
-                            placeholder="Bot token"
-                        />
-                        <button
-                            type="button"
-                            onClick={() => addChannel({ channel: 'telegram', token: telegramToken })}
-                            disabled={isBusy || whatsappPairing || !telegramToken}
-                            className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm disabled:opacity-50"
-                        >
-                            Save Telegram
-                        </button>
-                    </div>
+                <ChannelCard title="Telegram" pluginId="telegram">
+                    {({ connected }) => (
+                        connected && !editMode.telegram ? (
+                            <div className="flex items-center justify-between gap-3">
+                                <div className="text-sm text-gray-700">
+                                    Telegram connected. Open Telegram and send <span className="font-mono">/start</span> to your bot.
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => setEditMode(prev => ({ ...prev, telegram: true }))}
+                                    disabled={isBusy || whatsappPairing}
+                                    className="text-xs px-3 py-2 rounded border border-gray-300 bg-white disabled:opacity-50"
+                                >
+                                    Update token
+                                </button>
+                            </div>
+                        ) : (
+                            <div className="grid grid-cols-1 gap-2">
+                                <input
+                                    type="password"
+                                    value={telegramToken}
+                                    onChange={(e) => setTelegramToken(e.target.value)}
+                                    className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                                    placeholder="Bot token"
+                                />
+                                <button
+                                    type="button"
+                                    onClick={() => addChannel({ channel: 'telegram', token: telegramToken })}
+                                    disabled={isBusy || whatsappPairing || !telegramToken}
+                                    className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm disabled:opacity-50"
+                                >
+                                    Save Telegram
+                                </button>
+                            </div>
+                        )
+                    )}
                 </ChannelCard>
 
-                <ChannelCard title="Discord" pluginId="discord" stateKey="discord">
-                    <div className="grid grid-cols-1 gap-2">
-                        <input
-                            type="password"
-                            value={discordToken}
-                            onChange={(e) => setDiscordToken(e.target.value)}
-                            className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
-                            placeholder="Bot token"
-                        />
-                        <button
-                            type="button"
-                            onClick={() => addChannel({ channel: 'discord', token: discordToken })}
-                            disabled={isBusy || whatsappPairing || !discordToken}
-                            className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm disabled:opacity-50"
-                        >
-                            Save Discord
-                        </button>
-                    </div>
+                <ChannelCard title="Discord" pluginId="discord">
+                    {({ connected }) => (
+                        connected && !editMode.discord ? (
+                            <div className="flex items-center justify-between gap-3">
+                                <div className="text-sm text-gray-700">
+                                    Discord connected. Invite your bot to a server and send it a message.
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => setEditMode(prev => ({ ...prev, discord: true }))}
+                                    disabled={isBusy || whatsappPairing}
+                                    className="text-xs px-3 py-2 rounded border border-gray-300 bg-white disabled:opacity-50"
+                                >
+                                    Update token
+                                </button>
+                            </div>
+                        ) : (
+                            <div className="grid grid-cols-1 gap-2">
+                                <input
+                                    type="password"
+                                    value={discordToken}
+                                    onChange={(e) => setDiscordToken(e.target.value)}
+                                    className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                                    placeholder="Bot token"
+                                />
+                                <button
+                                    type="button"
+                                    onClick={() => addChannel({ channel: 'discord', token: discordToken })}
+                                    disabled={isBusy || whatsappPairing || !discordToken}
+                                    className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm disabled:opacity-50"
+                                >
+                                    Save Discord
+                                </button>
+                            </div>
+                        )
+                    )}
                 </ChannelCard>
 
-                <ChannelCard title="Slack" pluginId="slack" stateKey="slack">
-                    <div className="grid grid-cols-1 gap-2">
-                        <input
-                            type="password"
-                            value={slackBotToken}
-                            onChange={(e) => setSlackBotToken(e.target.value)}
-                            className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
-                            placeholder="Bot token (xoxb-...)"
-                        />
-                        <input
-                            type="password"
-                            value={slackAppToken}
-                            onChange={(e) => setSlackAppToken(e.target.value)}
-                            className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
-                            placeholder="App token (xapp-...)"
-                        />
-                        <button
-                            type="button"
-                            onClick={() => addChannel({ channel: 'slack', slackBotToken, slackAppToken })}
-                            disabled={isBusy || whatsappPairing || (!slackBotToken && !slackAppToken)}
-                            className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm disabled:opacity-50"
-                        >
-                            Save Slack
-                        </button>
-                    </div>
+                <ChannelCard title="Slack" pluginId="slack">
+                    {({ connected }) => (
+                        connected && !editMode.slack ? (
+                            <div className="flex items-center justify-between gap-3">
+                                <div className="text-sm text-gray-700">
+                                    Slack connected. Mention the bot in a channel to test.
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => setEditMode(prev => ({ ...prev, slack: true }))}
+                                    disabled={isBusy || whatsappPairing}
+                                    className="text-xs px-3 py-2 rounded border border-gray-300 bg-white disabled:opacity-50"
+                                >
+                                    Update tokens
+                                </button>
+                            </div>
+                        ) : (
+                            <div className="grid grid-cols-1 gap-2">
+                                <input
+                                    type="password"
+                                    value={slackBotToken}
+                                    onChange={(e) => setSlackBotToken(e.target.value)}
+                                    className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                                    placeholder="Bot token (xoxb-...)"
+                                />
+                                <input
+                                    type="password"
+                                    value={slackAppToken}
+                                    onChange={(e) => setSlackAppToken(e.target.value)}
+                                    className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                                    placeholder="App token (xapp-...)"
+                                />
+                                <button
+                                    type="button"
+                                    onClick={() => addChannel({ channel: 'slack', slackBotToken, slackAppToken })}
+                                    disabled={isBusy || whatsappPairing || (!slackBotToken && !slackAppToken)}
+                                    className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm disabled:opacity-50"
+                                >
+                                    Save Slack
+                                </button>
+                            </div>
+                        )
+                    )}
                 </ChannelCard>
 
-                <ChannelCard title="WhatsApp" pluginId="whatsapp" stateKey="whatsapp">
-                    <div className="space-y-2">
-                        <button
-                            type="button"
-                            onClick={startWhatsAppLogin}
-                            disabled={isBusy || whatsappPairing}
-                            className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm disabled:opacity-50"
-                        >
-                            {whatsappPairing ? 'Pairing…' : 'Start pairing (QR)'}
-                        </button>
-                        <div className="text-xs text-gray-600">
-                            This will pop a pairing window with a QR code.
+                <ChannelCard title="WhatsApp" pluginId="whatsapp">
+                    {({ connected }) => (
+                        <div className="space-y-2">
+                            {connected ? (
+                                <div className="text-sm text-gray-700">
+                                    WhatsApp connected. Send a message to this WhatsApp account to test.
+                                </div>
+                            ) : (
+                                <div className="text-sm text-gray-700">
+                                    Pair WhatsApp by scanning a QR code from your phone.
+                                </div>
+                            )}
+
+                            <button
+                                type="button"
+                                onClick={startWhatsAppLogin}
+                                disabled={isBusy || whatsappPairing}
+                                className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm disabled:opacity-50"
+                            >
+                                {whatsappPairing ? 'Pairing…' : connected ? 'Re-pair (QR)' : 'Start pairing (QR)'}
+                            </button>
+
+                            <div className="text-xs text-gray-600">
+                                This will open a pairing window with a QR code.
+                            </div>
                         </div>
-                    </div>
+                    )}
                 </ChannelCard>
             </div>
 

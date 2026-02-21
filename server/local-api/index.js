@@ -23,6 +23,26 @@ const GATEWAY_URL = process.env.OPENCLAW_GATEWAY_URL || 'http://127.0.0.1:18789'
 const GATEWAY_TOKEN = process.env.OPENCLAW_GATEWAY_TOKEN;
 const LOCAL_API_SECRET = process.env.LOCAL_API_SECRET || '';
 
+function resolveOpenClawCliPath() {
+    if (process.env.OPENCLAW_CLI_PATH) return process.env.OPENCLAW_CLI_PATH;
+    const candidates = [
+        path.join(HOME, '.npm-global', 'bin', 'openclaw'),
+        path.join(HOME, '.local', 'bin', 'openclaw'),
+        '/usr/local/bin/openclaw',
+        '/usr/bin/openclaw'
+    ];
+    for (const candidate of candidates) {
+        try {
+            if (fs.existsSync(candidate)) return candidate;
+        } catch {
+            // ignore
+        }
+    }
+    return 'openclaw';
+}
+
+const OPENCLAW_CLI = resolveOpenClawCliPath();
+
 const ALLOWED_PROVIDERS = new Set([
     'google-antigravity',
     'openai',
@@ -76,7 +96,7 @@ function requireApiSecret(req, res) {
 
 function runOpenClaw(args, { timeoutMs = 20000, stdin, env } = {}) {
     return new Promise((resolve, reject) => {
-        const child = spawn('openclaw', args, {
+        const child = spawn(OPENCLAW_CLI, args, {
             stdio: ['pipe', 'pipe', 'pipe'],
             env: {
                 ...process.env,
@@ -404,7 +424,7 @@ app.post('/api/providers/connect', (req, res) => {
     if (expiresIn) args.push('--expires-in', String(expiresIn));
     if (profileId) args.push('--profile-id', String(profileId));
 
-    const child = spawn('openclaw', args, { stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = spawn(OPENCLAW_CLI, args, { stdio: ['pipe', 'pipe', 'pipe'] });
     let stdout = '';
     let stderr = '';
 
@@ -567,9 +587,9 @@ app.get('/api/models/gateway', async (req, res) => {
 app.get('/api/models/catalog-all', async (req, res) => {
     try {
         execFile(
-            'openclaw',
+            OPENCLAW_CLI,
             ['models', 'list', '--all', '--json'],
-            { timeout: 15000, maxBuffer: 10 * 1024 * 1024 },
+            { timeout: 15000, maxBuffer: 10 * 1024 * 1024, env: { ...process.env } },
             (error, stdout, stderr) => {
                 if (error) {
                     return res.status(500).json({
@@ -626,7 +646,7 @@ app.post('/api/providers/oauth/start', (req, res) => {
     const { provider } = req.body || {};
     if (!provider) return res.status(400).json({ error: 'Provider is required' });
 
-    const child = spawn('openclaw', ['models', 'auth', 'login', '--provider', provider], {
+    const child = spawn(OPENCLAW_CLI, ['models', 'auth', 'login', '--provider', provider], {
         stdio: ['pipe', 'pipe', 'pipe']
     });
 
@@ -807,6 +827,7 @@ app.post('/api/gateway/restart', async (req, res) => {
 
 app.get('/api/channels/status', async (req, res) => {
     const attempts = [
+        { source: 'channels.status --probe --json', args: ['channels', 'status', '--probe', '--json'], timeoutMs: 20000 },
         { source: 'gateway.call status', args: ['gateway', 'call', 'status', '--json'], timeoutMs: 15000 },
         { source: 'gateway.call health', args: ['gateway', 'call', 'health', '--json'], timeoutMs: 15000 },
         { source: 'status', args: ['status'], timeoutMs: 15000 }
@@ -962,7 +983,7 @@ app.post('/api/channels/login', async (req, res) => {
     res.setHeader('Cache-Control', 'no-store');
     res.flushHeaders?.();
 
-    const child = spawn('openclaw', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(OPENCLAW_CLI, args, { stdio: ['ignore', 'pipe', 'pipe'] });
     const killTimer = setTimeout(() => {
         try { child.kill(); } catch { /* ignore */ }
     }, 5 * 60 * 1000);
