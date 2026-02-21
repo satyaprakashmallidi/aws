@@ -620,21 +620,37 @@ function runOpenClaw(args, { timeoutMs = 20000, stdin, env } = {}) {
 
         let stdout = '';
         let stderr = '';
+        let finished = false;
+
+        const finish = (err, result) => {
+            if (finished) return;
+            finished = true;
+            clearTimeout(timeout);
+            try { child.kill('SIGKILL'); } catch { /* ignore */ }
+            if (err) reject(err);
+            else resolve(result);
+        };
+
         const timeout = setTimeout(() => {
-            try { child.kill(); } catch { /* ignore */ }
-        }, timeoutMs);
+            const err = new Error(`openclaw ${args.join(' ')} timed out after ${timeoutMs}ms`);
+            err.code = 'OPENCLAW_TIMEOUT';
+            err.stdout = stdout;
+            err.stderr = stderr;
+            try { child.kill('SIGKILL'); } catch { /* ignore */ }
+            finish(err);
+        }, Math.max(1000, timeoutMs || 20000));
 
         child.stdout.on('data', (data) => { stdout += data.toString(); });
         child.stderr.on('data', (data) => { stderr += data.toString(); });
 
         child.on('error', (err) => {
-            clearTimeout(timeout);
-            reject(err);
+            err.stdout = stdout;
+            err.stderr = stderr;
+            finish(err);
         });
 
         child.on('close', (code) => {
-            clearTimeout(timeout);
-            resolve({ code, stdout, stderr });
+            finish(null, { code, stdout, stderr });
         });
 
         if (stdin !== undefined) {
@@ -801,14 +817,20 @@ async function invokeTool(tool, args = {}) {
     if (!GATEWAY_TOKEN) {
         throw new Error('OPENCLAW_GATEWAY_TOKEN not set');
     }
+
+    const controller = new AbortController();
+    const timeoutMs = process.env.TOOLS_TIMEOUT_MS ? Number(process.env.TOOLS_TIMEOUT_MS) : 5000;
+    const timeout = setTimeout(() => controller.abort(), Math.max(1000, timeoutMs || 5000));
+
     const response = await fetch(`${GATEWAY_URL.replace(/\/$/, '')}/tools/invoke`, {
         method: 'POST',
+        signal: controller.signal,
         headers: {
             'Authorization': `Bearer ${GATEWAY_TOKEN}`,
             'Content-Type': 'application/json'
         },
         body: JSON.stringify({ tool, args })
-    });
+    }).finally(() => clearTimeout(timeout));
     if (!response.ok) {
         const text = await response.text();
         throw new Error(`Tools API error (${response.status}): ${text}`);
@@ -844,13 +866,13 @@ const TASK_META_PATH = path.join(OPENCLAW_DIR, 'cron', 'tasks-meta.json');
 
 function readCronJobsFile() {
     try {
-        if (!fs.existsSync(CRON_JOBS_PATH)) return { version: 1, jobs: [] };
+        if (!fs.existsSync(CRON_JOBS_PATH)) return { version: 1, jobs: [], exists: false };
         const raw = fs.readFileSync(CRON_JOBS_PATH, 'utf8');
         const parsed = JSON.parse(raw);
         const jobs = Array.isArray(parsed?.jobs) ? parsed.jobs : [];
-        return { ...(parsed || {}), version: parsed?.version || 1, jobs };
+        return { ...(parsed || {}), version: parsed?.version || 1, jobs, exists: true };
     } catch {
-        return { version: 1, jobs: [] };
+        return { version: 1, jobs: [], exists: false };
     }
 }
 
@@ -928,7 +950,7 @@ function appendTaskLog(jobId, line) {
 }
 
 async function cronCliList() {
-    const parsed = await runOpenClawJson(['cron', 'list', '--all', '--json'], { timeoutMs: 20000 });
+    const parsed = await runOpenClawJson(['cron', 'list', '--all', '--json'], { timeoutMs: 6000 });
     return Array.isArray(parsed?.jobs) ? parsed.jobs : [];
 }
 
@@ -955,7 +977,7 @@ async function cronCliAdd({ agentId, name, message, sessionTarget = 'isolated', 
 }
 
 async function cronCliRm(jobId) {
-    return runOpenClawJson(['cron', 'rm', String(jobId), '--json'], { timeoutMs: 30000 });
+    return runOpenClawJson(['cron', 'rm', String(jobId), '--json'], { timeoutMs: 15000 });
 }
 
 async function cronCliRun(jobId) {
@@ -982,10 +1004,36 @@ async function cronCliRun(jobId) {
 }
 
 async function cronCliRuns({ jobId, limit = 50 } = {}) {
-    const args = ['cron', 'runs', '--limit', String(limit)];
-    if (jobId) args.push('--id', String(jobId));
-    const parsed = await runOpenClawJson(args, { timeoutMs: 30000 });
-    return Array.isArray(parsed?.entries) ? parsed.entries : [];
+    const id = jobId ? String(jobId) : '';
+    const limitNum = Number(limit);
+    const max = Number.isFinite(limitNum) ? Math.max(1, Math.min(500, Math.floor(limitNum))) : 50;
+
+    if (id) {
+        // Disk-backed JSONL (fast, works when gateway is down)
+        try {
+            const runsPath = path.join(OPENCLAW_DIR, 'cron', 'runs', `${id}.jsonl`);
+            if (fs.existsSync(runsPath)) {
+                const raw = fs.readFileSync(runsPath, 'utf8');
+                const lines = raw.split(/\r?\n/).filter(Boolean);
+                const parsed = [];
+                for (const line of lines.slice(Math.max(0, lines.length - max * 3))) {
+                    const obj = parseJsonLoose(line);
+                    if (obj && typeof obj === 'object') parsed.push(obj);
+                }
+                parsed.sort((a, b) => Number(b?.ts || 0) - Number(a?.ts || 0));
+                return parsed.slice(0, max);
+            }
+        } catch {
+            // ignore
+        }
+    }
+
+    // CLI fallback
+    const args = ['cron', 'runs', '--limit', String(max)];
+    if (id) args.push('--id', id);
+    const parsed = await runOpenClawJson(args, { timeoutMs: 6000 });
+    const entries = Array.isArray(parsed?.entries) ? parsed.entries : [];
+    return entries.slice(0, max);
 }
 
 function sleep(ms) {
@@ -1009,7 +1057,11 @@ async function cronInvoke(args) {
 }
 
 async function cronList() {
-    // 1) CLI (authoritative)
+    // 1) Disk (fast, works even if gateway is down)
+    const disk = readCronJobsFile();
+    if (disk?.exists) return disk.jobs;
+
+    // 2) CLI
     try {
         const jobs = await cronCliList();
         if (Array.isArray(jobs)) return jobs;
@@ -1017,7 +1069,7 @@ async function cronList() {
         // ignore
     }
 
-    // 2) Gateway tool (best-effort)
+    // 3) Gateway tool (best-effort)
     try {
         const response = await cronInvoke({ action: 'list' });
         const details = response?.result?.details || {};
@@ -1027,8 +1079,7 @@ async function cronList() {
         // ignore
     }
 
-    // 3) Disk
-    return readCronJobsFile().jobs;
+    return [];
 }
 
 async function cronAdd(job) {
@@ -2413,19 +2464,10 @@ app.get('/api/tasks/activity', async (req, res) => {
         const limit = Number.isFinite(limitRaw) ? Math.max(50, Math.min(2000, Math.floor(limitRaw))) : 400;
         const includeChildren = String(req.query?.includeChildren || 'true') !== 'false';
 
-        const runs = await cronCliRuns({ limit: 500 });
-        const latest = new Map();
-        for (const entry of runs) {
-            const jobId = String(entry?.jobId || '');
-            if (!jobId || !ids.includes(jobId)) continue;
-            const prev = latest.get(jobId);
-            const ts = Number(entry?.ts || 0);
-            if (!prev || ts > Number(prev?.ts || 0)) latest.set(jobId, entry);
-        }
-
         const items = [];
         for (const jobId of ids) {
-            const entry = latest.get(jobId) || null;
+            const entries = await cronCliRuns({ jobId, limit: 1 });
+            const entry = entries?.[0] || null;
             const sessionId = entry?.sessionId ? String(entry.sessionId) : null;
             const agentId = parseAgentIdFromSessionKey(entry?.sessionKey) || null;
             if (!sessionId) {
