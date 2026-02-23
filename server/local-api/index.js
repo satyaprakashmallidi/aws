@@ -152,6 +152,21 @@ function sanitizeSessionSummary(session) {
     return out;
 }
 
+function isInternalSessionKey(sessionKey) {
+    const key = String(sessionKey || '');
+    if (!key.startsWith('agent:')) return false;
+    const parts = key.split(':');
+    const last = parts[parts.length - 1] || '';
+    const bg = String(process.env.TASK_BACKGROUND_SESSION_SUFFIX || 'tasks');
+    return last === 'supervisor' || last === 'task-router' || last === bg;
+}
+
+function filterInternalSessions(sessions, { includeInternal = false } = {}) {
+    const list = Array.isArray(sessions) ? sessions : [];
+    if (includeInternal) return list;
+    return list.filter(s => !isInternalSessionKey(s?.key || s?.sessionKey));
+}
+
 async function listSessionsCli({ limit = 500 } = {}) {
     const attempts = [
         ['sessions', '--json'],
@@ -1131,11 +1146,11 @@ function deriveStatusFromCronJob(job) {
     return 'scheduled';
 }
 
-function defaultDisabledAtIso() {
-    // openclaw enforces schedule.at <= 10 years in the future.
-    const years = process.env.TASK_DISABLED_AT_YEARS ? Number(process.env.TASK_DISABLED_AT_YEARS) : 9;
-    const safeYears = Number.isFinite(years) ? Math.max(1, Math.min(9.5, years)) : 9;
-    const ms = Math.floor(safeYears * 365 * 24 * 60 * 60 * 1000);
+function defaultTaskAtIso() {
+    // We keep tasks "disabled" and run them via our worker; schedule.at is just a required field.
+    // Use a near-future time so it's never "years ahead" and doesn't trip OpenClaw validation.
+    const msRaw = process.env.TASK_DEFAULT_AT_MS ? Number(process.env.TASK_DEFAULT_AT_MS) : 2000;
+    const ms = Number.isFinite(msRaw) ? Math.max(1_000, Math.min(24 * 60 * 60 * 1000, Math.floor(msRaw))) : 60_000;
     return new Date(Date.now() + ms).toISOString();
 }
 
@@ -1144,7 +1159,7 @@ async function cronCliList() {
     return Array.isArray(parsed?.jobs) ? parsed.jobs : [];
 }
 
-async function cronCliAdd({ agentId, name, message, sessionTarget = 'isolated', atIso = defaultDisabledAtIso(), disabled = true } = {}) {
+async function cronCliAdd({ agentId, name, message, sessionTarget = 'isolated', atIso = defaultTaskAtIso(), disabled = true } = {}) {
     const args = [
         'cron',
         'add',
@@ -1630,9 +1645,10 @@ async function inferTaskSpecFromMessage(message) {
     ].join('\n');
 
     try {
+        const routerSessionKey = 'agent:main:task-router';
         const payload = {
             model: 'openclaw:main',
-            user: `agent:main:task-router:${crypto.randomUUID()}`,
+            user: routerSessionKey,
             messages: [
                 { role: 'system', content: system },
                 { role: 'user', content: text }
@@ -1644,7 +1660,8 @@ async function inferTaskSpecFromMessage(message) {
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${GATEWAY_TOKEN}`,
-                'Content-Type': 'application/json'
+                'Content-Type': 'application/json',
+                'x-openclaw-session-key': routerSessionKey
             },
             body: JSON.stringify(payload)
         });
@@ -2549,11 +2566,12 @@ app.post('/api/chat', async (req, res) => {
 });
 
 app.get('/api/chat', async (req, res) => {
-    const { action, sessionKey, limit, includeTools } = req.query;
+    const { action, sessionKey, limit, includeTools, includeInternal } = req.query;
     if (action !== 'history' && action !== 'sessions') return res.status(400).json({ error: 'Invalid action' });
     try {
         if (action === 'sessions') {
             const requestedLimit = limit ? parseInt(limit, 10) : 30;
+            const wantInternal = String(includeInternal || 'false') === 'true';
 
             // 1) Try gateway tool (fast when available)
             try {
@@ -2564,7 +2582,7 @@ app.get('/api/chat', async (req, res) => {
                 });
                 const details = response?.result?.details || {};
                 const raw = details.sessions || response.sessions || [];
-                const sessions = (Array.isArray(raw) ? raw : []).map(sanitizeSessionSummary);
+                const sessions = filterInternalSessions((Array.isArray(raw) ? raw : []).map(sanitizeSessionSummary), { includeInternal: wantInternal });
                 if (sessions.length > 1) {
                     sessions.sort((a, b) => (b?.updatedAt || 0) - (a?.updatedAt || 0));
                     const limited = takeRecentSessionsWithMain(sessions, { agentId: 'main', limit: requestedLimit });
@@ -2577,7 +2595,7 @@ app.get('/api/chat', async (req, res) => {
             // 2) Try CLI (matches what TUI shows)
             try {
                 const { sessions, total } = await listSessionsCli({ limit: requestedLimit });
-                const list = (Array.isArray(sessions) ? sessions : []).map(sanitizeSessionSummary);
+                const list = filterInternalSessions((Array.isArray(sessions) ? sessions : []).map(sanitizeSessionSummary), { includeInternal: wantInternal });
                 list.sort((a, b) => (b?.updatedAt || 0) - (a?.updatedAt || 0));
                 const limited = takeRecentSessionsWithMain(list, { agentId: 'main', limit: requestedLimit });
                 return res.json({ sessions: limited, total: total || list.length, source: 'cli' });
@@ -2588,7 +2606,7 @@ app.get('/api/chat', async (req, res) => {
             // 3) Read from disk
             const index = readSessionsIndex('main');
             if (!index) return res.status(500).json({ error: 'Failed to load sessions (no sessions index found)' });
-            const list = sessionsIndexToList(index);
+            const list = filterInternalSessions(sessionsIndexToList(index), { includeInternal: wantInternal });
             list.sort((a, b) => (b?.updatedAt || 0) - (a?.updatedAt || 0));
             const limited = takeRecentSessionsWithMain(list, { agentId: 'main', limit: requestedLimit });
             return res.json({ sessions: limited, total: list.length, source: 'disk' });
@@ -2944,7 +2962,7 @@ app.post('/api/broadcast', async (req, res) => {
     }
 });
 
-async function callGatewayCompletion({ model = 'openclaw:main', messages, timeoutMs = 20000 } = {}) {
+async function callGatewayCompletion({ model = 'openclaw:main', messages, timeoutMs = 20000, sessionKey, agentId } = {}) {
     if (!GATEWAY_TOKEN) {
         const err = new Error('OPENCLAW_GATEWAY_TOKEN not set');
         err.code = 'MISSING_GATEWAY_TOKEN';
@@ -2952,6 +2970,7 @@ async function callGatewayCompletion({ model = 'openclaw:main', messages, timeou
     }
     const payload = {
         model,
+        ...(sessionKey ? { user: String(sessionKey) } : {}),
         messages: Array.isArray(messages) ? messages : [],
         stream: false
     };
@@ -2959,7 +2978,9 @@ async function callGatewayCompletion({ model = 'openclaw:main', messages, timeou
         method: 'POST',
         headers: {
             'Authorization': `Bearer ${GATEWAY_TOKEN}`,
-            'Content-Type': 'application/json'
+            'Content-Type': 'application/json',
+            ...(agentId && agentId !== 'main' ? { 'x-openclaw-agent-id': String(agentId) } : {}),
+            ...(sessionKey ? { 'x-openclaw-session-key': String(sessionKey) } : {})
         },
         body: JSON.stringify(payload),
         signal: AbortSignal.timeout(Math.max(2000, timeoutMs || 20000))
@@ -3052,6 +3073,8 @@ async function aiTriageRun({ job, meta, runEntry, activity }) {
     const { content } = await callGatewayCompletion({
         model: 'openclaw:main',
         timeoutMs: 25000,
+        sessionKey: 'agent:main:supervisor',
+        agentId: 'main',
         messages: [
             { role: 'system', content: system },
             { role: 'user', content: JSON.stringify(payload) }
@@ -3098,6 +3121,12 @@ async function applyAiEdits(jobId, edits) {
 }
 
 const TASK_WORKER_ENABLED = process.env.TASK_WORKER_ENABLED !== 'false';
+const TASK_EXECUTION_MODE = String(process.env.TASK_EXECUTION_MODE || 'gateway').toLowerCase();
+const TASK_BACKGROUND_SESSION_SUFFIX = String(process.env.TASK_BACKGROUND_SESSION_SUFFIX || 'tasks');
+
+function taskBackgroundSessionKey(agentId = 'main') {
+    return `agent:${String(agentId || 'main')}:${TASK_BACKGROUND_SESSION_SUFFIX}`;
+}
 const TASK_WORKER_INTERVAL_MS = process.env.TASK_WORKER_INTERVAL_MS
     ? Number(process.env.TASK_WORKER_INTERVAL_MS)
     : 15 * 60_000;
@@ -3118,6 +3147,7 @@ async function taskWorkerTick() {
     if (chatInFlight > 0) return;
     if (taskWorkerRunning) return;
     taskWorkerRunning = true;
+    let scheduleSoon = false;
 
     try {
         recordHeartbeat();
@@ -3171,6 +3201,8 @@ async function taskWorkerTick() {
             })
             .sort(byPriority);
 
+        scheduleSoon = runQueue.length > 1 || reviewQueue.length > 1;
+
         const job = runQueue[0] || reviewQueue[0] || null;
         if (!job) return;
 
@@ -3207,6 +3239,8 @@ async function taskWorkerTick() {
             };
         };
 
+        let localRunContext = null;
+
         if (runQueue.length > 0) {
             const attempts = Number.isFinite(Number(meta0?.attempts)) ? Number(meta0.attempts) : 0;
             const maxAttempts = Number.isFinite(Number(meta0?.maxAttempts)) ? Math.max(1, Math.min(10, Number(meta0.maxAttempts))) : 3;
@@ -3224,7 +3258,29 @@ async function taskWorkerTick() {
             appendTaskNarrative(jobId, { role: 'system', agentId, text: `Attempt ${nextAttempt}/${maxAttempts} started` });
 
             try {
-                await cronCliRun(jobId);
+                if (TASK_EXECUTION_MODE === 'gateway') {
+                    const sessionKey = taskBackgroundSessionKey(agentId);
+                    const msg = String(job?.payload?.message || meta0?.message || '').trim();
+                    const result = await runAgentTask({ agentId, sessionId: sessionKey, message: msg });
+                    const ts = Date.now();
+                    localRunContext = {
+                        entry: {
+                            ts,
+                            status: 'ok',
+                            summary: result?.content || null,
+                            error: null,
+                            sessionId: sessionKey,
+                            sessionKey
+                        },
+                        activity: {
+                            lines: result?.content ? [String(result.content).slice(0, 4000)] : [],
+                            children: [],
+                            changes: []
+                        }
+                    };
+                } else {
+                    await cronCliRun(jobId);
+                }
             } catch (err) {
                 const msg = err?.message || String(err);
                 upsertTaskMeta(jobId, { ...(getTaskMeta(jobId) || {}), status: 'review', error: msg });
@@ -3236,14 +3292,52 @@ async function taskWorkerTick() {
 
         // Either we just ran, or we're triaging an existing review.
         const meta1 = getTaskMeta(jobId) || meta0;
-        let runEntry = null;
-        let activity = { lines: [], children: [], changes: [] };
-        try {
-            const ctx = await getLatestRunContext();
-            runEntry = ctx.entry;
-            activity = ctx.activity;
-        } catch {
-            // ignore
+        let runEntry = localRunContext?.entry || null;
+        let activity = localRunContext?.activity || { lines: [], children: [], changes: [] };
+
+        if (!runEntry && TASK_EXECUTION_MODE === 'gateway') {
+            const lr = meta1?.lastRun;
+            if (lr && (lr.ts || lr.summary || lr.error)) {
+                const sessionKey = lr?.sessionKey ? String(lr.sessionKey) : taskBackgroundSessionKey(agentId);
+                runEntry = {
+                    ts: Number(lr.ts || 0) || null,
+                    status: String(lr.status || '').toLowerCase() || null,
+                    summary: lr.summary ? String(lr.summary) : null,
+                    error: lr.error ? String(lr.error) : null,
+                    sessionId: lr?.sessionId ? String(lr.sessionId) : sessionKey,
+                    sessionKey
+                };
+                activity = { lines: runEntry.summary ? [String(runEntry.summary).slice(0, 4000)] : [], children: [], changes: [] };
+            }
+        }
+
+        if (!runEntry) {
+            // Cron runs can take a moment to hit disk; retry briefly before calling the supervisor.
+            for (let i = 0; i < 8; i += 1) {
+                try {
+                    // eslint-disable-next-line no-await-in-loop
+                    const ctx = await getLatestRunContext();
+                    if (ctx?.entry) {
+                        runEntry = ctx.entry;
+                        activity = ctx.activity;
+                        break;
+                    }
+                } catch {
+                    // ignore
+                }
+                // eslint-disable-next-line no-await-in-loop
+                await sleep(300);
+            }
+        }
+
+        if (!runEntry) {
+            const msg = 'Waiting for run record';
+            upsertTaskMeta(jobId, { ...(getTaskMeta(jobId) || meta1), status: 'review', error: msg });
+            appendTaskLog(jobId, msg);
+            setTimeout(() => {
+                taskWorkerTick().catch(() => { /* ignore */ });
+            }, 1500);
+            return;
         }
 
         const runStatus = String(runEntry?.status || job?.state?.lastStatus || '').toLowerCase();
@@ -3376,6 +3470,11 @@ async function taskWorkerTick() {
         // ignore
     } finally {
         taskWorkerRunning = false;
+        if (scheduleSoon) {
+            setTimeout(() => {
+                taskWorkerTick().catch(() => { /* ignore */ });
+            }, 750);
+        }
     }
 }
 
