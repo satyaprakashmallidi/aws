@@ -39,6 +39,8 @@ const GATEWAY_URL = process.env.OPENCLAW_GATEWAY_URL || 'http://127.0.0.1:18789'
 const GATEWAY_TOKEN = process.env.OPENCLAW_GATEWAY_TOKEN;
 const LOCAL_API_SECRET = process.env.LOCAL_API_SECRET || '';
 
+let chatInFlight = 0;
+
 function resolveOpenClawCliPath() {
     if (process.env.OPENCLAW_CLI_PATH) return process.env.OPENCLAW_CLI_PATH;
     const candidates = [
@@ -954,6 +956,30 @@ function appendTaskLog(jobId, line) {
     return upsertTaskMeta(id, { ...meta, log: nextLog });
 }
 
+function appendTaskNarrative(jobId, entry) {
+    const id = String(jobId);
+    const meta = getTaskMeta(id) || {};
+    const prev = Array.isArray(meta?.narrative) ? meta.narrative : [];
+    const e = entry && typeof entry === 'object' ? entry : {};
+    const text = String(e.text || '').trim();
+    if (!text) return meta;
+    const next = [...prev, {
+        ts: e.ts || new Date().toISOString(),
+        agentId: e.agentId || meta?.agentId || null,
+        role: e.role || 'assistant',
+        text
+    }].slice(-500);
+    return upsertTaskMeta(id, { ...meta, narrative: next });
+}
+
+function deriveStatusFromCronJob(job) {
+    const last = String(job?.state?.lastStatus || '').toLowerCase();
+    if (last === 'ok') return 'completed';
+    if (last) return 'review';
+    if (job?.enabled === false) return 'disabled';
+    return 'scheduled';
+}
+
 async function cronCliList() {
     const parsed = await runOpenClawJson(['cron', 'list', '--all', '--json'], { timeoutMs: 6000 });
     return Array.isArray(parsed?.jobs) ? parsed.jobs : [];
@@ -985,6 +1011,14 @@ async function cronCliAdd({ agentId, name, message, sessionTarget = 'isolated', 
         await sleep(750);
         return runOpenClawJson(args, { timeoutMs: 30000 });
     }
+}
+
+async function cronCliEdit(jobId, { noDeliver, enabled } = {}) {
+    const args = ['cron', 'edit', String(jobId), '--json'];
+    if (noDeliver) args.push('--no-deliver');
+    if (enabled === true) args.push('--enabled');
+    if (enabled === false) args.push('--disabled');
+    return runOpenClawJson(args, { timeoutMs: 15000 });
 }
 
 async function cronCliRm(jobId) {
@@ -1169,8 +1203,51 @@ async function cronRm(jobId) {
     return { ok: true, source: 'disk' };
 }
 
+function ensureTaskMetaForCronJob(job) {
+    const id = String(job?.id || '').trim();
+    if (!id) return false;
+    const existing = getTaskMeta(id);
+    if (existing) return false;
+
+    const agentId = String(job?.agentId || 'main');
+    const createdAt = new Date(job?.createdAtMs || Date.now()).toISOString();
+    const status = deriveStatusFromCronJob(job);
+    upsertTaskMeta(id, {
+        status,
+        priority: 3,
+        createdAt,
+        agentId,
+        name: job?.name || `Task ${id}`,
+        message: job?.payload?.message ? String(job.payload.message) : '',
+        attempts: 0,
+        maxAttempts: 3,
+        lastSeenRunAtMs: Number(job?.state?.lastRunAtMs || 0) || 0,
+        lastDecision: null,
+        lastRun: null,
+        error: job?.state?.lastError || null,
+        log: [],
+        narrative: []
+    });
+    appendTaskNarrative(id, { role: 'system', agentId, text: `Imported cron job: ${job?.name || id}` });
+    if (job?.payload?.message) appendTaskNarrative(id, { role: 'user', agentId, text: String(job.payload.message) });
+    if (job?.state?.lastError) appendTaskNarrative(id, { role: 'system', agentId, text: `Last error: ${String(job.state.lastError)}` });
+    return true;
+}
+
+function syncTaskMetaFromCronJobs(jobs) {
+    const list = Array.isArray(jobs) ? jobs : [];
+    let wrote = false;
+    for (const j of list) {
+        if (j?.payload?.kind !== 'agentTurn') continue;
+        const created = ensureTaskMetaForCronJob(j);
+        if (created) wrote = true;
+    }
+    return wrote;
+}
+
 async function listCronJobs({ includeDisabled = true } = {}) {
     const jobs = await cronList();
+    syncTaskMetaFromCronJobs(jobs);
     const metaMap = readTaskMetaFile();
     const merged = (Array.isArray(jobs) ? jobs : [])
         .filter(j => j?.payload?.kind === 'agentTurn')
@@ -1179,10 +1256,7 @@ async function listCronJobs({ includeDisabled = true } = {}) {
             const base = meta && typeof meta === 'object' ? meta : {};
 
             if (!meta) {
-                const last = j?.state?.lastStatus;
-                let status = j?.enabled === false ? 'disabled' : 'scheduled';
-                if (String(last).toLowerCase() === 'ok') status = 'completed';
-                else if (last) status = 'review';
+                const status = deriveStatusFromCronJob(j);
 
                 return {
                     ...j,
@@ -1194,7 +1268,12 @@ async function listCronJobs({ includeDisabled = true } = {}) {
                         pickedUpAt: null,
                         completedAt: null,
                         result: null,
-                        error: null,
+                        error: j?.state?.lastError || null,
+                        attempts: 0,
+                        maxAttempts: 3,
+                        narrative: [],
+                        lastDecision: null,
+                        lastRun: null,
                         log: []
                     }
                 };
@@ -1211,6 +1290,11 @@ async function listCronJobs({ includeDisabled = true } = {}) {
                     completedAt: base.completedAt || null,
                     result: base.result ?? null,
                     error: base.error ?? null,
+                    attempts: Number.isFinite(Number(base.attempts)) ? Number(base.attempts) : 0,
+                    maxAttempts: Number.isFinite(Number(base.maxAttempts)) ? Math.max(1, Math.min(10, Number(base.maxAttempts))) : 3,
+                    narrative: Array.isArray(base.narrative) ? base.narrative : [],
+                    lastDecision: base.lastDecision || null,
+                    lastRun: base.lastRun || null,
                     log: Array.isArray(base.log) ? base.log : []
                 }
             };
@@ -1295,10 +1379,15 @@ async function createTask({ message, agentId = 'main', priority = 3, source = 'u
         agentId: job?.agentId || spec.agentId,
         name: job?.name || spec.name,
         message: spec.payload.message,
+        attempts: 0,
+        maxAttempts: 3,
         log: []
     });
     appendTaskLog(id, `Created (source=${source}, agent=${job?.agentId || spec.agentId})`);
+    appendTaskNarrative(id, { role: 'system', agentId: job?.agentId || spec.agentId, text: `Task created: ${job?.name || spec.name}` });
+    appendTaskNarrative(id, { role: 'user', agentId: job?.agentId || spec.agentId, text: spec.payload.message });
     if (autoRun) appendTaskLog(id, 'Run requested');
+    if (autoRun) appendTaskNarrative(id, { role: 'system', agentId: job?.agentId || spec.agentId, text: 'Run requested' });
 
     if (autoRun) {
         setTimeout(() => {
@@ -2256,6 +2345,7 @@ app.patch('/api/agents', (req, res) => {
 });
 
 app.post('/api/chat', async (req, res) => {
+    chatInFlight += 1;
     try {
         const { message, agentId = 'main', sessionId, stream } = req.body || {};
         if (!message) return res.status(400).json({ error: 'Message required' });
@@ -2290,13 +2380,17 @@ app.post('/api/chat', async (req, res) => {
         if (stream) {
             res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
             res.setHeader('Cache-Control', 'no-store');
-            response.body.pipeTo(WritableStreamToNode(res));
+            response.body.pipeTo(WritableStreamToNode(res)).finally(() => {
+                chatInFlight = Math.max(0, chatInFlight - 1);
+            });
             return;
         }
         const data = await response.json();
         res.json(data);
     } catch (error) {
         res.status(500).json({ error: error.message });
+    } finally {
+        chatInFlight = Math.max(0, chatInFlight - 1);
     }
 });
 
@@ -2648,99 +2742,418 @@ app.post('/api/broadcast', async (req, res) => {
     }
 });
 
+async function callGatewayCompletion({ model = 'openclaw:main', messages, timeoutMs = 20000 } = {}) {
+    if (!GATEWAY_TOKEN) {
+        const err = new Error('OPENCLAW_GATEWAY_TOKEN not set');
+        err.code = 'MISSING_GATEWAY_TOKEN';
+        throw err;
+    }
+    const payload = {
+        model,
+        messages: Array.isArray(messages) ? messages : [],
+        stream: false
+    };
+    const response = await fetch(`${GATEWAY_URL.replace(/\/$/, '')}/v1/chat/completions`, {
+        method: 'POST',
+        headers: {
+            'Authorization': `Bearer ${GATEWAY_TOKEN}`,
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(Math.max(2000, timeoutMs || 20000))
+    });
+    const raw = await response.text();
+    if (!response.ok) {
+        const err = new Error(`Gateway completion failed (${response.status}): ${raw.slice(0, 400)}`);
+        err.stdout = raw;
+        throw err;
+    }
+    const parsed = parseJsonLoose(raw) || {};
+    const content = extractCompletionText(parsed) || raw;
+    return { raw: parsed, content: String(content || '').trim() };
+}
+
+function clipTextBlock(text, maxChars) {
+    const s = String(text || '');
+    if (s.length <= maxChars) return s;
+    return `${s.slice(0, Math.max(0, maxChars - 1))}…`;
+}
+
+function normalizeAiDecision(decision) {
+    const d = decision && typeof decision === 'object' ? decision : {};
+    const raw = String(d.decision || d.status || '').toLowerCase();
+    const allowed = new Set(['retry', 'failed', 'completed', 'review']);
+    const nextDecision = allowed.has(raw) ? raw : 'review';
+    const reason = typeof d.reason === 'string' ? d.reason.trim() : '';
+    const narration = Array.isArray(d.narration)
+        ? d.narration.map(s => String(s || '').trim()).filter(Boolean).slice(0, 30)
+        : [];
+    const edits = d.edits && typeof d.edits === 'object' ? d.edits : {};
+    const noDeliver = edits.noDeliver === true;
+    const enabled = typeof edits.enabled === 'boolean' ? edits.enabled : null;
+    return {
+        decision: nextDecision,
+        reason: reason || 'No reason provided',
+        narration,
+        edits: {
+            noDeliver,
+            enabled
+        }
+    };
+}
+
+async function aiTriageRun({ job, meta, runEntry, activity }) {
+    const system = [
+        'You are the supervisor for an autonomous multi-agent task system running OpenClaw cron jobs.',
+        'You must decide the NEXT action for this job and produce a narrated step-by-step summary of what happened.',
+        'Do NOT include private chain-of-thought or hidden reasoning.',
+        'Return ONLY valid JSON (no markdown).',
+        'Schema:',
+        '{"decision":"completed"|"retry"|"failed"|"review","reason":string,"edits"?:{"noDeliver"?:boolean,"enabled"?:boolean},"narration"?:string[]}',
+        'Guidance:',
+        '- If the run failed due to delivery (e.g. "announce delivery failed"), prefer edits.noDeliver=true and decision=retry.',
+        '- If the core work appears completed (summary present) but delivery failed, you may choose decision=completed with edits.noDeliver=true.',
+        '- Only choose decision=retry if another attempt is likely to succeed.'
+    ].join('\n');
+
+    const payload = {
+        job: {
+            id: job?.id,
+            name: job?.name,
+            agentId: job?.agentId,
+            message: job?.payload?.message,
+            enabled: job?.enabled,
+            delivery: job?.delivery,
+            schedule: job?.schedule,
+            state: job?.state
+        },
+        meta: {
+            status: meta?.status,
+            attempts: meta?.attempts,
+            maxAttempts: meta?.maxAttempts
+        },
+        run: runEntry || null,
+        activity: {
+            lines: Array.isArray(activity?.lines) ? activity.lines.slice(-120) : [],
+            children: Array.isArray(activity?.children)
+                ? activity.children.slice(0, 3).map(c => ({
+                    agentId: c?.agentId || null,
+                    sessionId: c?.sessionId || null,
+                    lines: Array.isArray(c?.lines) ? c.lines.slice(-60) : []
+                }))
+                : [],
+            childCount: Array.isArray(activity?.children) ? activity.children.length : 0,
+            memoryChanges: Array.isArray(activity?.changes) ? activity.changes.map(c => c.summary).slice(0, 30) : []
+        }
+    };
+
+    const { content } = await callGatewayCompletion({
+        model: 'openclaw:main',
+        timeoutMs: 25000,
+        messages: [
+            { role: 'system', content: system },
+            { role: 'user', content: JSON.stringify(payload) }
+        ]
+    });
+
+    const parsed = parseJsonLoose(content);
+    if (!parsed || typeof parsed !== 'object') {
+        return normalizeAiDecision({ decision: 'review', reason: `Supervisor returned non-JSON: ${clipTextBlock(content, 200)}` });
+    }
+    return normalizeAiDecision(parsed);
+}
+
+async function applyAiEdits(jobId, edits) {
+    const e = edits && typeof edits === 'object' ? edits : {};
+    let applied = [];
+    if (e.noDeliver) {
+        try {
+            await cronCliEdit(jobId, { noDeliver: true });
+            applied.push('noDeliver');
+        } catch {
+            try {
+                await cronEdit(jobId, { delivery: { mode: 'none', channel: 'last' } });
+                applied.push('noDeliver(disk)');
+            } catch {
+                // ignore
+            }
+        }
+    }
+    if (typeof e.enabled === 'boolean') {
+        try {
+            await cronCliEdit(jobId, { enabled: e.enabled });
+            applied.push(e.enabled ? 'enabled' : 'disabled');
+        } catch {
+            try {
+                await cronEdit(jobId, { enabled: e.enabled });
+                applied.push(e.enabled ? 'enabled(disk)' : 'disabled(disk)');
+            } catch {
+                // ignore
+            }
+        }
+    }
+    return applied;
+}
+
 const TASK_WORKER_ENABLED = process.env.TASK_WORKER_ENABLED !== 'false';
 const TASK_WORKER_INTERVAL_MS = process.env.TASK_WORKER_INTERVAL_MS
     ? Number(process.env.TASK_WORKER_INTERVAL_MS)
     : 15_000;
 
+const GATEWAY_KEEPALIVE_ENABLED = process.env.GATEWAY_KEEPALIVE_ENABLED !== 'false';
+const GATEWAY_KEEPALIVE_INTERVAL_MS = process.env.GATEWAY_KEEPALIVE_INTERVAL_MS
+    ? Number(process.env.GATEWAY_KEEPALIVE_INTERVAL_MS)
+    : 60_000;
+
 let taskWorkerRunning = false;
 
 async function taskWorkerTick() {
     if (!TASK_WORKER_ENABLED) return;
+    if (chatInFlight > 0) return;
     if (taskWorkerRunning) return;
     taskWorkerRunning = true;
 
     try {
         recordHeartbeat();
-        const allJobs = await cronList();
-        const metaMap = readTaskMetaFile();
-        const queue = (Array.isArray(allJobs) ? allJobs : [])
-            .filter(j => j?.payload?.kind === 'agentTurn')
-            .filter(j => {
-                const meta = metaMap && typeof metaMap === 'object' ? metaMap[String(j?.id)] : null;
-                const st = meta?.status;
-                return st === 'assigned' || st === 'run_requested';
-            })
-            .sort((a, b) => {
-                const ma = metaMap[String(a?.id)] || {};
-                const mb = metaMap[String(b?.id)] || {};
-                const pa = normalizePriority(ma?.priority ?? 3);
-                const pb = normalizePriority(mb?.priority ?? 3);
-                if (pb !== pa) return pb - pa;
-                return coerceTimeMs(mb?.updatedAt) - coerceTimeMs(ma?.updatedAt);
-            });
+        const all = await cronList();
+        const allJobs = (Array.isArray(all) ? all : []).filter(j => j?.payload?.kind === 'agentTurn');
+        syncTaskMetaFromCronJobs(allJobs);
 
-        if (queue.length === 0) return;
-        const job = queue[0];
-        const jobId = job.id;
-        const agentId = job?.agentId || 'main';
+        const metaMap = readTaskMetaFile();
+        const byPriority = (a, b) => {
+            const ma = metaMap[String(a?.id)] || {};
+            const mb = metaMap[String(b?.id)] || {};
+            const pa = normalizePriority(ma?.priority ?? 3);
+            const pb = normalizePriority(mb?.priority ?? 3);
+            if (pb !== pa) return pb - pa;
+            return coerceTimeMs(mb?.updatedAt) - coerceTimeMs(ma?.updatedAt);
+        };
+
+        // Detect new runs from OpenClaw (including scheduled jobs) and move them into AI review/completed.
+        for (const j of allJobs) {
+            const id = String(j?.id || '');
+            if (!id) continue;
+            const meta = metaMap[id] || getTaskMeta(id) || {};
+            const seen = Number(meta?.lastSeenRunAtMs || 0) || 0;
+            const lastRunAt = Number(j?.state?.lastRunAtMs || 0) || 0;
+            if (!lastRunAt || lastRunAt <= seen) continue;
+            const nextStatus = deriveStatusFromCronJob(j);
+            const nextMeta = upsertTaskMeta(id, {
+                ...meta,
+                status: nextStatus,
+                lastSeenRunAtMs: lastRunAt,
+                error: nextStatus === 'review' ? (j?.state?.lastError || meta?.error || null) : null
+            });
+            metaMap[id] = nextMeta;
+            appendTaskNarrative(id, { role: 'system', agentId: j?.agentId || meta?.agentId || 'main', text: `New run detected: ${j?.state?.lastStatus || 'unknown'}${j?.state?.lastError ? ` — ${j.state.lastError}` : ''}` });
+        }
+
+        const runQueue = [...allJobs]
+            .filter(j => {
+                const meta = metaMap[String(j?.id)] || {};
+                return meta?.status === 'assigned' || meta?.status === 'run_requested';
+            })
+            .sort(byPriority);
+
+        const reviewQueue = [...allJobs]
+            .filter(j => {
+                const meta = metaMap[String(j?.id)] || {};
+                if (meta?.status !== 'review') return false;
+                const lastTs = Date.parse(String(meta?.lastDecision?.ts || ''));
+                if (!Number.isFinite(lastTs)) return true;
+                return (Date.now() - lastTs) > 60_000;
+            })
+            .sort(byPriority);
+
+        const job = runQueue[0] || reviewQueue[0] || null;
+        if (!job) return;
+
+        const jobId = String(job.id);
+        const agentId = String(job?.agentId || 'main');
+        const meta0 = getTaskMeta(jobId) || {};
+
+        const getLatestRunContext = async () => {
+            const entries = await cronCliRuns({ jobId, limit: 1 });
+            const entry = entries?.[0] || null;
+            const sessionId = entry?.sessionId ? String(entry.sessionId) : null;
+            const runAgentId = parseAgentIdFromSessionKey(entry?.sessionKey) || agentId;
+            if (!sessionId) return { entry, activity: { lines: [], children: [], changes: [] } };
+
+            const root = readSessionJsonlById({ sessionId, agentId: runAgentId, limit: 600 });
+            const rootSummary = summarizeSessionActivity(root.events, { hideThinking: true, showToolArgs: true, defaultAgentId: runAgentId || 'main' });
+            const rootChanges = extractFileChangesFromEvents(root.events, { pathPrefix: 'memory/' });
+
+            const children = [];
+            for (const childRef of (rootSummary.childSessions || []).slice(0, 5)) {
+                const child = readSessionJsonlById({ sessionId: childRef.sessionId, agentId: childRef.agentId, limit: 400 });
+                const childSummary = summarizeSessionActivity(child.events, { hideThinking: true, showToolArgs: true, defaultAgentId: childRef.agentId || 'main' });
+                const childChanges = extractFileChangesFromEvents(child.events, { pathPrefix: 'memory/' });
+                children.push({ sessionId: childRef.sessionId, agentId: childRef.agentId || null, sessionKey: childRef.sessionKey || null, lines: childSummary.lines, changes: childChanges });
+            }
+
+            return {
+                entry,
+                activity: {
+                    lines: rootSummary.lines,
+                    changes: rootChanges,
+                    children
+                }
+            };
+        };
+
+        if (runQueue.length > 0) {
+            const attempts = Number.isFinite(Number(meta0?.attempts)) ? Number(meta0.attempts) : 0;
+            const maxAttempts = Number.isFinite(Number(meta0?.maxAttempts)) ? Math.max(1, Math.min(10, Number(meta0.maxAttempts))) : 3;
+            const nextAttempt = attempts + 1;
+
+            upsertTaskMeta(jobId, {
+                ...meta0,
+                status: 'picked_up',
+                pickedUpAt: new Date().toISOString(),
+                attempts: nextAttempt,
+                maxAttempts,
+                error: null
+            });
+            appendTaskLog(jobId, `Worker picked up (agent=${agentId}, attempt=${nextAttempt}/${maxAttempts})`);
+            appendTaskNarrative(jobId, { role: 'system', agentId, text: `Attempt ${nextAttempt}/${maxAttempts} started` });
+
+            try {
+                await cronCliRun(jobId);
+            } catch (err) {
+                const msg = err?.message || String(err);
+                upsertTaskMeta(jobId, { ...(getTaskMeta(jobId) || {}), status: 'review', error: msg });
+                appendTaskLog(jobId, `Error: ${msg}`);
+                appendTaskNarrative(jobId, { role: 'system', agentId, text: `Run error: ${msg}` });
+                return;
+            }
+        }
+
+        // Either we just ran, or we're triaging an existing review.
+        const meta1 = getTaskMeta(jobId) || meta0;
+        let runEntry = null;
+        let activity = { lines: [], children: [], changes: [] };
+        try {
+            const ctx = await getLatestRunContext();
+            runEntry = ctx.entry;
+            activity = ctx.activity;
+        } catch {
+            // ignore
+        }
+
+        const runStatus = String(runEntry?.status || job?.state?.lastStatus || '').toLowerCase();
+        const runSummary = String(runEntry?.summary || '').trim();
+        const runError = String(runEntry?.error || job?.state?.lastError || '').trim();
 
         upsertTaskMeta(jobId, {
             ...(getTaskMeta(jobId) || {}),
-            status: 'picked_up',
-            pickedUpAt: new Date().toISOString(),
-            error: null
+            lastSeenRunAtMs: Number(job?.state?.lastRunAtMs || meta1?.lastSeenRunAtMs || 0) || 0,
+            lastRun: {
+                ts: Number(runEntry?.ts || 0) || null,
+                status: runStatus || null,
+                summary: runSummary || null,
+                error: runError || null,
+                sessionId: runEntry?.sessionId ? String(runEntry.sessionId) : null,
+                sessionKey: runEntry?.sessionKey ? String(runEntry.sessionKey) : null
+            }
         });
-        appendTaskLog(jobId, `Worker picked up (agent=${agentId})`);
 
-        let resultText = '';
-        let runStatus = 'ok';
+        let decision;
         try {
-            await cronCliRun(jobId);
-
-            // `cron run` only returns {ok,ran}; agent text is in `cron runs`.
-            for (let i = 0; i < 6; i += 1) {
-                const entries = await cronCliRuns({ jobId, limit: 1 });
-                const entry = entries?.[0];
-                if (entry && String(entry?.action) === 'finished') {
-                    runStatus = String(entry?.status || 'ok');
-                    resultText = String(entry?.summary || '').trim();
-                    break;
-                }
-                await sleep(500);
-            }
-
-            if (!resultText) {
-                const entries = await cronCliRuns({ jobId, limit: 1 });
-                const entry = entries?.[0];
-                runStatus = String(entry?.status || runStatus);
-                resultText = String(entry?.summary || '').trim();
-            }
-
-            if (!resultText) {
-                resultText = 'Completed (no summary returned)';
-            }
+            decision = await aiTriageRun({ job, meta: getTaskMeta(jobId) || meta1, runEntry, activity });
         } catch (err) {
             const msg = err?.message || String(err);
+            appendTaskLog(jobId, `Supervisor error: ${msg}`);
+            appendTaskNarrative(jobId, { role: 'system', agentId, text: `Supervisor error: ${msg}` });
+            upsertTaskMeta(jobId, { ...(getTaskMeta(jobId) || {}), status: 'review', error: runError || msg, lastDecision: { ts: new Date().toISOString(), decision: 'review', reason: msg } });
+            return;
+        }
+
+        const applied = await applyAiEdits(jobId, decision?.edits);
+        if (applied.length) {
+            appendTaskLog(jobId, `Applied edits: ${applied.join(', ')}`);
+            appendTaskNarrative(jobId, { role: 'system', agentId, text: `Applied edits: ${applied.join(', ')}` });
+        }
+
+        for (const line of (decision?.narration || []).slice(0, 30)) {
+            appendTaskNarrative(jobId, { role: 'assistant', agentId, text: line });
+        }
+
+        const meta2 = getTaskMeta(jobId) || meta1;
+        const attempts2 = Number.isFinite(Number(meta2?.attempts)) ? Number(meta2.attempts) : 0;
+        const maxAttempts2 = Number.isFinite(Number(meta2?.maxAttempts)) ? Math.max(1, Math.min(10, Number(meta2.maxAttempts))) : 3;
+
+        const nowIso = new Date().toISOString();
+        const baseDecision = {
+            ts: nowIso,
+            decision: decision?.decision,
+            reason: decision?.reason,
+            editsApplied: applied
+        };
+
+        if (decision.decision === 'completed' || runStatus === 'ok') {
             upsertTaskMeta(jobId, {
-                ...(getTaskMeta(jobId) || {}),
-                status: 'review',
-                error: msg
+                ...meta2,
+                status: 'completed',
+                completedAt: nowIso,
+                result: runSummary || meta2?.result || 'Completed',
+                error: null,
+                attempts: 0,
+                lastDecision: baseDecision
             });
-            appendTaskLog(jobId, `Error: ${msg}`);
+            appendTaskLog(jobId, 'Worker marked completed');
+            appendTaskNarrative(jobId, { role: 'system', agentId, text: `Completed: ${decision?.reason || 'ok'}` });
+            return;
+        }
+
+        if (decision.decision === 'retry') {
+            if (attempts2 >= maxAttempts2) {
+                upsertTaskMeta(jobId, {
+                    ...meta2,
+                    status: 'failed',
+                    completedAt: nowIso,
+                    error: decision?.reason || runError || 'Failed',
+                    lastDecision: { ...baseDecision, decision: 'failed', reason: `Max attempts reached. ${decision?.reason || ''}`.trim() }
+                });
+                appendTaskLog(jobId, 'Worker marked failed (max attempts)');
+                appendTaskNarrative(jobId, { role: 'system', agentId, text: `Failed after ${maxAttempts2} attempts: ${decision?.reason}` });
+                return;
+            }
+
+            upsertTaskMeta(jobId, {
+                ...meta2,
+                status: 'run_requested',
+                error: decision?.reason || runError || null,
+                lastDecision: baseDecision
+            });
+            appendTaskLog(jobId, `Retry requested: ${decision?.reason}`);
+            appendTaskNarrative(jobId, { role: 'system', agentId, text: `Retry requested: ${decision?.reason}` });
+            setTimeout(() => {
+                taskWorkerTick().catch(() => { /* ignore */ });
+            }, 500);
+            return;
+        }
+
+        if (decision.decision === 'failed') {
+            upsertTaskMeta(jobId, {
+                ...meta2,
+                status: 'failed',
+                completedAt: nowIso,
+                error: decision?.reason || runError || 'Failed',
+                lastDecision: baseDecision
+            });
+            appendTaskLog(jobId, `Worker marked failed: ${decision?.reason}`);
+            appendTaskNarrative(jobId, { role: 'system', agentId, text: `Failed: ${decision?.reason}` });
             return;
         }
 
         upsertTaskMeta(jobId, {
-            ...(getTaskMeta(jobId) || {}),
-            status: String(runStatus).toLowerCase() === 'ok' ? 'completed' : 'review',
-            completedAt: new Date().toISOString(),
-            result: resultText,
-            error: String(runStatus).toLowerCase() === 'ok' ? null : runStatus
+            ...meta2,
+            status: 'review',
+            error: decision?.reason || runError || meta2?.error || null,
+            lastDecision: baseDecision
         });
-        appendTaskLog(jobId, 'Worker completed');
-        const resultPreview = resultText ? resultText.replace(/\s+/g, ' ').slice(0, 200) : '';
-        if (resultPreview) appendTaskLog(jobId, `Result: ${resultPreview}${resultText.length > 200 ? '…' : ''}`);
+        appendTaskLog(jobId, `Worker left in review: ${decision?.reason}`);
+        appendTaskNarrative(jobId, { role: 'system', agentId, text: `In review: ${decision?.reason}` });
     } catch {
         // ignore
     } finally {
@@ -2755,6 +3168,27 @@ if (TASK_WORKER_ENABLED) {
     setTimeout(() => {
         taskWorkerTick().catch(() => { /* ignore */ });
     }, 2500);
+}
+
+async function gatewayKeepaliveTick() {
+    try {
+        const baseUrl = GATEWAY_URL.replace(/\/$/, '');
+        await fetch(`${baseUrl}/`, {
+            method: 'GET',
+            signal: AbortSignal.timeout(1500)
+        });
+    } catch {
+        // ignore
+    }
+}
+
+if (GATEWAY_KEEPALIVE_ENABLED) {
+    setInterval(() => {
+        gatewayKeepaliveTick().catch(() => { /* ignore */ });
+    }, Math.max(5_000, GATEWAY_KEEPALIVE_INTERVAL_MS));
+    setTimeout(() => {
+        gatewayKeepaliveTick().catch(() => { /* ignore */ });
+    }, 2000);
 }
 
 const PORT = process.env.LOCAL_API_PORT ? Number(process.env.LOCAL_API_PORT) : 3333;

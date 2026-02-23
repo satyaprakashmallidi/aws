@@ -158,6 +158,27 @@ const Broadcast = () => {
         return lines.slice(-400);
     }, [created, activityByJobId]);
 
+    const narrationMessages = useMemo(() => {
+        const all = [];
+        for (const task of created) {
+            const job = jobsById?.[task.id];
+            const narrative = Array.isArray(job?.metadata?.narrative) ? job.metadata.narrative : [];
+            for (const n of narrative) {
+                if (!n || typeof n !== 'object') continue;
+                const ts = n.ts || null;
+                all.push({
+                    ts,
+                    agentId: n.agentId || task.agentId || 'main',
+                    role: n.role || 'assistant',
+                    text: n.text || '',
+                    jobId: task.id
+                });
+            }
+        }
+        all.sort((a, b) => String(a.ts || '').localeCompare(String(b.ts || '')));
+        return all.filter(m => String(m.text || '').trim()).slice(-250);
+    }, [created, jobsById]);
+
     return (
         <div className="grid grid-cols-12 gap-6 h-[calc(100vh-8rem)]">
             {/* Left: Task Composition */}
@@ -275,116 +296,149 @@ const Broadcast = () => {
                             </button>
                         </div>
 
-                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                            {created.map((task) => {
-                                const job = jobsById?.[task.id];
-                                const status = getStatus(job);
-                                const result = job?.metadata?.result;
-                                const item = activityByJobId?.[task.id];
-                                const rootLines = Array.isArray(item?.lines) ? item.lines : [];
-                                const changes = Array.isArray(item?.changes) ? item.changes : [];
-                                const children = Array.isArray(item?.children) ? item.children : [];
-                                return (
-                                    <div key={task.id} className="border rounded-lg p-4 bg-gray-50">
-                                        <div className="flex items-start justify-between gap-3">
-                                            <div>
-                                                <div className="font-semibold text-gray-800">{task.agentId}</div>
-                                                <div className="text-xs text-gray-500 mt-0.5">{task.name || task.id}</div>
-                                            </div>
-                                            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold border ${statusClass(status)}`}>
-                                                {status}
-                                            </span>
-                                        </div>
-
-                                        {result && (
-                                            <div className="mt-3 bg-white p-3 rounded border border-gray-200 text-xs font-mono text-gray-800 whitespace-pre-wrap max-h-40 overflow-auto">
-                                                {result}
-                                            </div>
-                                        )}
-
-                                        {rootLines.length > 0 && (
-                                            <div className="mt-3 bg-white p-3 rounded border border-gray-200 text-[11px] font-mono text-gray-700 whitespace-pre-wrap max-h-40 overflow-auto">
-                                                {rootLines.slice(-18).join('\n')}
-                                            </div>
-                                        )}
-
-                                        {changes.length > 0 && (
-                                            <div className="mt-3 bg-white p-3 rounded border border-gray-200">
-                                                <div className="text-[10px] font-semibold text-gray-600 mb-2">Memory changes</div>
-                                                <div className="space-y-2">
-                                                    {changes.slice(-3).map((ch, idx) => (
-                                                        <div key={`${ch.path}-${idx}`} className="border border-gray-100 rounded p-2 bg-gray-50">
-                                                            <div className="text-[10px] font-semibold text-gray-700">
-                                                                {ch.tool}: {ch.path}
-                                                            </div>
-                                                            {ch.preview && (
-                                                                <pre className="mt-1 text-[11px] font-mono text-gray-700 whitespace-pre-wrap max-h-28 overflow-auto">
-                                                                    {ch.preview}
-                                                                </pre>
-                                                            )}
-                                                            {ch.diff && (
-                                                                <pre className="mt-1 text-[11px] font-mono text-gray-700 whitespace-pre-wrap max-h-28 overflow-auto">
-                                                                    {ch.diff}
-                                                                </pre>
-                                                            )}
-                                                        </div>
-                                                    ))}
-                                                </div>
-                                            </div>
-                                        )}
-
-                                        {children.map((c) => {
-                                            const childLines = Array.isArray(c?.lines) ? c.lines : [];
-                                            const childChanges = Array.isArray(c?.changes) ? c.changes : [];
-                                            if (!childLines.length) return null;
-                                            return (
-                                                <div key={c.sessionId} className="mt-3 bg-white p-3 rounded border border-gray-200">
-                                                    <div className="text-[10px] font-semibold text-gray-600 mb-2">
-                                                        Delegated session: {c.agentId ? `${c.agentId}:` : ''}{c.sessionId}
+                        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                            <div className="lg:col-span-2 space-y-4">
+                                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                                    {created.map((task) => {
+                                        const job = jobsById?.[task.id];
+                                        const status = getStatus(job);
+                                        const result = job?.metadata?.result;
+                                        const item = activityByJobId?.[task.id];
+                                        const rootLines = Array.isArray(item?.lines) ? item.lines : [];
+                                        const changes = Array.isArray(item?.changes) ? item.changes : [];
+                                        const children = Array.isArray(item?.children) ? item.children : [];
+                                        return (
+                                            <div key={task.id} className="border rounded-lg p-4 bg-gray-50">
+                                                <div className="flex items-start justify-between gap-3">
+                                                    <div>
+                                                        <div className="font-semibold text-gray-800">{task.agentId}</div>
+                                                        <div className="text-xs text-gray-500 mt-0.5">{task.name || task.id}</div>
                                                     </div>
-                                                    <pre className="text-[11px] font-mono text-gray-700 whitespace-pre-wrap max-h-32 overflow-auto">
-                                                        {childLines.slice(-12).join('\n')}
-                                                    </pre>
-
-                                                    {childChanges.length > 0 && (
-                                                        <div className="mt-3">
-                                                            <div className="text-[10px] font-semibold text-gray-600 mb-2">Child memory changes</div>
-                                                            <div className="space-y-2">
-                                                                {childChanges.slice(-2).map((ch, idx) => (
-                                                                    <div key={`${ch.path}-${idx}`} className="border border-gray-100 rounded p-2 bg-gray-50">
-                                                                        <div className="text-[10px] font-semibold text-gray-700">
-                                                                            {ch.tool}: {ch.path}
-                                                                        </div>
-                                                                        {ch.preview && (
-                                                                            <pre className="mt-1 text-[11px] font-mono text-gray-700 whitespace-pre-wrap max-h-24 overflow-auto">
-                                                                                {ch.preview}
-                                                                            </pre>
-                                                                        )}
-                                                                        {ch.diff && (
-                                                                            <pre className="mt-1 text-[11px] font-mono text-gray-700 whitespace-pre-wrap max-h-24 overflow-auto">
-                                                                                {ch.diff}
-                                                                            </pre>
-                                                                        )}
-                                                                    </div>
-                                                                ))}
-                                                            </div>
-                                                        </div>
-                                                    )}
+                                                    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold border ${statusClass(status)}`}>
+                                                        {status}
+                                                    </span>
                                                 </div>
-                                            );
-                                        })}
-                                    </div>
-                                );
-                            })}
-                        </div>
 
-                        <div className="border border-gray-200 rounded-lg bg-white">
-                            <div className="px-4 py-2 border-b border-gray-200 text-sm font-semibold text-gray-800">
-                                Agent activity
+                                                {result && (
+                                                    <div className="mt-3 bg-white p-3 rounded border border-gray-200 text-xs font-mono text-gray-800 whitespace-pre-wrap max-h-40 overflow-auto">
+                                                        {result}
+                                                    </div>
+                                                )}
+
+                                                {rootLines.length > 0 && (
+                                                    <div className="mt-3 bg-white p-3 rounded border border-gray-200 text-[11px] font-mono text-gray-700 whitespace-pre-wrap max-h-40 overflow-auto">
+                                                        {rootLines.slice(-18).join('\n')}
+                                                    </div>
+                                                )}
+
+                                                {changes.length > 0 && (
+                                                    <div className="mt-3 bg-white p-3 rounded border border-gray-200">
+                                                        <div className="text-[10px] font-semibold text-gray-600 mb-2">Memory changes</div>
+                                                        <div className="space-y-2">
+                                                            {changes.slice(-3).map((ch, idx) => (
+                                                                <div key={`${ch.path}-${idx}`} className="border border-gray-100 rounded p-2 bg-gray-50">
+                                                                    <div className="text-[10px] font-semibold text-gray-700">
+                                                                        {ch.tool}: {ch.path}
+                                                                    </div>
+                                                                    {ch.preview && (
+                                                                        <pre className="mt-1 text-[11px] font-mono text-gray-700 whitespace-pre-wrap max-h-28 overflow-auto">
+                                                                            {ch.preview}
+                                                                        </pre>
+                                                                    )}
+                                                                    {ch.diff && (
+                                                                        <pre className="mt-1 text-[11px] font-mono text-gray-700 whitespace-pre-wrap max-h-28 overflow-auto">
+                                                                            {ch.diff}
+                                                                        </pre>
+                                                                    )}
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                )}
+
+                                                {children.map((c) => {
+                                                    const childLines = Array.isArray(c?.lines) ? c.lines : [];
+                                                    const childChanges = Array.isArray(c?.changes) ? c.changes : [];
+                                                    if (!childLines.length) return null;
+                                                    return (
+                                                        <div key={c.sessionId} className="mt-3 bg-white p-3 rounded border border-gray-200">
+                                                            <div className="text-[10px] font-semibold text-gray-600 mb-2">
+                                                                Delegated session: {c.agentId ? `${c.agentId}:` : ''}{c.sessionId}
+                                                            </div>
+                                                            <pre className="text-[11px] font-mono text-gray-700 whitespace-pre-wrap max-h-32 overflow-auto">
+                                                                {childLines.slice(-12).join('\n')}
+                                                            </pre>
+
+                                                            {childChanges.length > 0 && (
+                                                                <div className="mt-3">
+                                                                    <div className="text-[10px] font-semibold text-gray-600 mb-2">Child memory changes</div>
+                                                                    <div className="space-y-2">
+                                                                        {childChanges.slice(-2).map((ch, idx) => (
+                                                                            <div key={`${ch.path}-${idx}`} className="border border-gray-100 rounded p-2 bg-gray-50">
+                                                                                <div className="text-[10px] font-semibold text-gray-700">
+                                                                                    {ch.tool}: {ch.path}
+                                                                                </div>
+                                                                                {ch.preview && (
+                                                                                    <pre className="mt-1 text-[11px] font-mono text-gray-700 whitespace-pre-wrap max-h-24 overflow-auto">
+                                                                                        {ch.preview}
+                                                                                    </pre>
+                                                                                )}
+                                                                                {ch.diff && (
+                                                                                    <pre className="mt-1 text-[11px] font-mono text-gray-700 whitespace-pre-wrap max-h-24 overflow-auto">
+                                                                                        {ch.diff}
+                                                                                    </pre>
+                                                                                )}
+                                                                            </div>
+                                                                        ))}
+                                                                    </div>
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+
+                                <div className="border border-gray-200 rounded-lg bg-white">
+                                    <div className="px-4 py-2 border-b border-gray-200 text-sm font-semibold text-gray-800">
+                                        Agent activity (raw)
+                                    </div>
+                                    <pre className="p-4 text-xs text-gray-700 whitespace-pre-wrap max-h-64 overflow-auto">
+                                        {activityLines.length ? activityLines.join('\n') : 'Waiting for agent activity…'}
+                                    </pre>
+                                </div>
                             </div>
-                            <pre className="p-4 text-xs text-gray-700 whitespace-pre-wrap max-h-64 overflow-auto">
-                                {activityLines.length ? activityLines.join('\n') : 'Waiting for agent activity…'}
-                            </pre>
+
+                            <div className="border border-gray-200 rounded-lg bg-white flex flex-col min-h-[24rem]">
+                                <div className="px-4 py-2 border-b border-gray-200 text-sm font-semibold text-gray-800">
+                                    AI narration
+                                </div>
+                                <div className="flex-1 overflow-auto p-4 space-y-3">
+                                    {narrationMessages.length === 0 && (
+                                        <div className="text-sm text-gray-500">Waiting for narrated steps…</div>
+                                    )}
+                                    {narrationMessages.map((m, idx) => {
+                                        const role = String(m.role || 'assistant');
+                                        const isUser = role === 'user';
+                                        const isSystem = role === 'system';
+                                        const bubble = isUser
+                                            ? 'bg-blue-50 border-blue-100'
+                                            : isSystem
+                                                ? 'bg-gray-50 border-gray-200'
+                                                : 'bg-white border-gray-200';
+                                        return (
+                                            <div key={`${m.jobId}-${idx}`} className={`border rounded-lg p-3 ${bubble}`}>
+                                                <div className="text-[10px] text-gray-500 mb-1">
+                                                    {m.ts || ''}{m.agentId ? ` • ${m.agentId}` : ''}
+                                                </div>
+                                                <div className="text-sm text-gray-800 whitespace-pre-wrap">{m.text}</div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </div>
                         </div>
                     </div>
                 )}
