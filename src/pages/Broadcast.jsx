@@ -133,6 +133,17 @@ const Broadcast = () => {
     };
 
     const narrationMessages = useMemo(() => {
+        const shouldInclude = ({ role, text }) => {
+            const r = String(role || 'assistant').toLowerCase();
+            const t = String(text || '').trim();
+            if (!t) return false;
+            if (r === 'user') return false;
+            if (t.startsWith('Imported cron job:')) return false;
+            if (t.startsWith('Last error:')) return false;
+            if (t === 'Run requested') return false;
+            if (t.startsWith('Task created:')) return false;
+            return true;
+        };
         const all = [];
         for (const task of created) {
             const job = jobsById?.[task.id];
@@ -150,10 +161,21 @@ const Broadcast = () => {
             }
         }
         all.sort((a, b) => String(a.ts || '').localeCompare(String(b.ts || '')));
-        return all.filter(m => String(m.text || '').trim()).slice(-250);
+        return all.filter(shouldInclude).slice(-250);
     }, [created, jobsById]);
 
     const recentNarrationMessages = useMemo(() => {
+        const shouldInclude = ({ role, text }) => {
+            const r = String(role || 'assistant').toLowerCase();
+            const t = String(text || '').trim();
+            if (!t) return false;
+            if (r === 'user') return false;
+            if (t.startsWith('Imported cron job:')) return false;
+            if (t.startsWith('Last error:')) return false;
+            if (t === 'Run requested') return false;
+            if (t.startsWith('Task created:')) return false;
+            return true;
+        };
         const all = [];
         for (const job of (Array.isArray(recentJobs) ? recentJobs : [])) {
             const narrative = Array.isArray(job?.metadata?.narrative) ? job.metadata.narrative : [];
@@ -170,7 +192,7 @@ const Broadcast = () => {
             }
         }
         all.sort((a, b) => String(a.ts || '').localeCompare(String(b.ts || '')));
-        return all.filter(m => String(m.text || '').trim()).slice(-250);
+        return all.filter(shouldInclude).slice(-250);
     }, [recentJobs]);
 
     const feedMessages = createdIds.size > 0 ? narrationMessages : recentNarrationMessages;

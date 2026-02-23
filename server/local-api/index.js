@@ -1228,9 +1228,6 @@ function ensureTaskMetaForCronJob(job) {
         log: [],
         narrative: []
     });
-    appendTaskNarrative(id, { role: 'system', agentId, text: `Imported cron job: ${job?.name || id}` });
-    if (job?.payload?.message) appendTaskNarrative(id, { role: 'user', agentId, text: String(job.payload.message) });
-    if (job?.state?.lastError) appendTaskNarrative(id, { role: 'system', agentId, text: `Last error: ${String(job.state.lastError)}` });
     return true;
 }
 
@@ -1385,7 +1382,6 @@ async function createTask({ message, agentId = 'main', priority = 3, source = 'u
     });
     appendTaskLog(id, `Created (source=${source}, agent=${job?.agentId || spec.agentId})`);
     appendTaskNarrative(id, { role: 'system', agentId: job?.agentId || spec.agentId, text: `Task created: ${job?.name || spec.name}` });
-    appendTaskNarrative(id, { role: 'user', agentId: job?.agentId || spec.agentId, text: spec.payload.message });
     if (autoRun) appendTaskLog(id, 'Run requested');
     if (autoRun) appendTaskNarrative(id, { role: 'system', agentId: job?.agentId || spec.agentId, text: 'Run requested' });
 

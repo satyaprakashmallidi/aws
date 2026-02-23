@@ -15,13 +15,16 @@ const KanbanBoard = () => {
     const [tasks, setTasks] = useState([]);
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
+    const [createOpen, setCreateOpen] = useState(false);
+    const [newMessage, setNewMessage] = useState('');
+    const [newPriority, setNewPriority] = useState(3);
 
     useEffect(() => {
         fetchTasks();
         const interval = setInterval(() => {
             fetchTasks();
             fetch(apiUrl('/api/heartbeat'), { method: 'POST' }).catch(() => { /* ignore */ });
-        }, 60_000);
+        }, 10_000);
         return () => clearInterval(interval);
     }, []);
 
@@ -44,6 +47,7 @@ const KanbanBoard = () => {
     };
 
     const getColumnTasks = (columnId) => {
+        const known = new Set(['completed', 'failed', 'review', 'picked_up', 'assigned', 'run_requested', 'scheduled', 'disabled']);
         const byStatus = (status) => tasks.filter(t => getTaskStatus(t) === status);
 
         if (columnId === 'done') return byStatus('completed');
@@ -51,28 +55,37 @@ const KanbanBoard = () => {
         if (columnId === 'review') return byStatus('review');
         if (columnId === 'active') return byStatus('picked_up');
         if (columnId === 'assigned') return byStatus('assigned').concat(byStatus('run_requested')).concat(byStatus('scheduled'));
-        if (columnId === 'inbox') return byStatus('disabled');
+        if (columnId === 'inbox') {
+            return tasks.filter((t) => {
+                const s = String(getTaskStatus(t) || '').trim();
+                if (!s) return true;
+                if (s === 'disabled') return true;
+                return !known.has(s);
+            });
+        }
         return [];
     };
 
     const handleCreateTask = async () => {
-        const message = prompt('Task instructions:');
-        if (!message || !message.trim()) return;
-        const rawPriority = prompt('Priority (1=low, 5=high):', '3') || '3';
-        const priority = Math.max(1, Math.min(5, Number(rawPriority) || 3));
+        const message = String(newMessage || '').trim();
+        if (!message) return;
+        const priority = Math.max(1, Math.min(5, Number(newPriority) || 3));
         setSaving(true);
         try {
             await fetch(apiUrl('/api/tasks'), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    name: `Task: ${message.trim().slice(0, 60)}${message.trim().length > 60 ? '…' : ''}`,
-                    payload: { message, agentId: 'main', source: 'kanban' },
-                    metadata: { priority, status: 'assigned' },
-                    enabled: true,
-                    schedule: { expr: 'manual' }
+                    message,
+                    agentId: 'main',
+                    priority,
+                    source: 'kanban',
+                    name: `Task: ${message.slice(0, 60)}${message.length > 60 ? '…' : ''}`
                 })
             });
+            setCreateOpen(false);
+            setNewMessage('');
+            setNewPriority(3);
             fetchTasks();
         } catch (error) {
             console.error('Failed to create task:', error);
@@ -97,7 +110,7 @@ const KanbanBoard = () => {
                     Mission Queue
                 </h2>
                 <button
-                    onClick={handleCreateTask}
+                    onClick={() => setCreateOpen(true)}
                     disabled={saving}
                     className="px-3 py-1.5 bg-blue-600 text-white rounded-md text-sm font-medium hover:bg-blue-700 shadow-sm flex items-center gap-1 disabled:opacity-50"
                 >
@@ -105,6 +118,62 @@ const KanbanBoard = () => {
                     {saving ? 'Creating…' : 'New Task'}
                 </button>
             </div>
+
+            {createOpen && (
+                <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={() => !saving && setCreateOpen(false)}>
+                    <div className="bg-white rounded-lg shadow-xl w-full max-w-lg overflow-hidden" onClick={(e) => e.stopPropagation()}>
+                        <div className="px-4 py-3 border-b border-gray-200">
+                            <div className="text-sm font-semibold text-gray-900">Create task</div>
+                            <div className="text-xs text-gray-500">This will run automatically.</div>
+                        </div>
+                        <div className="p-4 space-y-3">
+                            <div>
+                                <div className="text-xs font-medium text-gray-700 mb-1">Task instructions</div>
+                                <textarea
+                                    value={newMessage}
+                                    onChange={(e) => setNewMessage(e.target.value)}
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 h-28 resize-none"
+                                    placeholder="Describe the task..."
+                                    disabled={saving}
+                                />
+                            </div>
+                            <div>
+                                <div className="text-xs font-medium text-gray-700 mb-1">Priority</div>
+                                <select
+                                    value={newPriority}
+                                    onChange={(e) => setNewPriority(Number(e.target.value) || 3)}
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-white"
+                                    disabled={saving}
+                                >
+                                    <option value={5}>5 (highest)</option>
+                                    <option value={4}>4</option>
+                                    <option value={3}>3 (normal)</option>
+                                    <option value={2}>2</option>
+                                    <option value={1}>1 (lowest)</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div className="px-4 py-3 border-t border-gray-200 flex items-center justify-end gap-2 bg-gray-50">
+                            <button
+                                type="button"
+                                onClick={() => setCreateOpen(false)}
+                                disabled={saving}
+                                className="px-3 py-2 rounded border border-gray-200 bg-white text-sm disabled:opacity-50"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                type="button"
+                                onClick={handleCreateTask}
+                                disabled={saving || !String(newMessage || '').trim()}
+                                className="px-3 py-2 rounded bg-blue-600 text-white text-sm disabled:opacity-50"
+                            >
+                                {saving ? 'Creating…' : 'Create'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             <div className="flex-1 overflow-x-auto p-4">
                 <div className="flex gap-4 h-full min-w-max">
@@ -138,10 +207,15 @@ const KanbanBoard = () => {
                                             </div>
 
                                             <p className="mt-2 text-xs text-gray-500 line-clamp-2">
-                                                {task.payload?.message || 'No description'}
+                                                {task.payload?.message || task?.metadata?.message || 'No description'}
                                             </p>
 
                                             <div className="mt-2 flex items-center gap-2 flex-wrap">
+                                                {task?.agentId && (
+                                                    <span className="bg-gray-100 text-gray-700 text-[10px] px-1.5 py-0.5 rounded border border-gray-200">
+                                                        {String(task.agentId)}
+                                                    </span>
+                                                )}
                                                 {task?.metadata?.priority && (
                                                     <span className="bg-gray-100 text-gray-700 text-[10px] px-1.5 py-0.5 rounded border border-gray-200">
                                                         p{task.metadata.priority}
