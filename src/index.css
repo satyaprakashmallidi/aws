@@ -62,3 +62,8 @@
 .cl-card a[href*="clerk.com"] {
   display: none !important;
 }
+
+.cl-rootBox a[href*="clerk.dev"],
+.cl-card a[href*="clerk.dev"] {
+  display: none !important;
+}
