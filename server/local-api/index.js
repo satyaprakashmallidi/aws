@@ -1588,6 +1588,9 @@ function extractCompletionText(data) {
 }
 
 async function runAgentTask({ agentId = 'main', sessionId, message }) {
+    const timeoutMsRaw = process.env.TASK_AGENT_TIMEOUT_MS ? Number(process.env.TASK_AGENT_TIMEOUT_MS) : 120_000;
+    const timeoutMs = Number.isFinite(timeoutMsRaw) ? Math.max(5_000, Math.min(10 * 60_000, Math.floor(timeoutMsRaw))) : 120_000;
+
     const payload = {
         model: `openclaw:${agentId}`,
         user: sessionId || `agent:${agentId}:task`,
@@ -1602,7 +1605,8 @@ async function runAgentTask({ agentId = 'main', sessionId, message }) {
             ...(agentId !== 'main' ? { 'x-openclaw-agent-id': agentId } : {}),
             ...(sessionId ? { 'x-openclaw-session-key': sessionId } : {})
         },
-        body: JSON.stringify(payload)
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(timeoutMs)
     });
     const text = await response.text();
     if (!response.ok) {
@@ -3123,6 +3127,9 @@ async function applyAiEdits(jobId, edits) {
 const TASK_WORKER_ENABLED = process.env.TASK_WORKER_ENABLED !== 'false';
 const TASK_EXECUTION_MODE = String(process.env.TASK_EXECUTION_MODE || 'gateway').toLowerCase();
 const TASK_BACKGROUND_SESSION_SUFFIX = String(process.env.TASK_BACKGROUND_SESSION_SUFFIX || 'tasks');
+const TASK_PICKED_UP_STALE_MS = process.env.TASK_PICKED_UP_STALE_MS
+    ? Number(process.env.TASK_PICKED_UP_STALE_MS)
+    : 5 * 60_000;
 
 function taskBackgroundSessionKey(agentId = 'main') {
     return `agent:${String(agentId || 'main')}:${TASK_BACKGROUND_SESSION_SUFFIX}`;
@@ -3156,6 +3163,27 @@ async function taskWorkerTick() {
         syncTaskMetaFromCronJobs(allJobs);
 
         const metaMap = readTaskMetaFile();
+
+        // Recover tasks stuck in picked_up (e.g. worker crash / gateway hang).
+        for (const j of allJobs) {
+            const id = String(j?.id || '');
+            if (!id) continue;
+            const meta = metaMap[id] || getTaskMeta(id) || {};
+            if (meta?.status !== 'picked_up') continue;
+            const pickedUpAtMs = coerceTimeMs(meta?.pickedUpAt);
+            if (!pickedUpAtMs) continue;
+            if ((Date.now() - pickedUpAtMs) < Math.max(30_000, TASK_PICKED_UP_STALE_MS)) continue;
+
+            const attempts = Number.isFinite(Number(meta?.attempts)) ? Number(meta.attempts) : 0;
+            const maxAttempts = Number.isFinite(Number(meta?.maxAttempts)) ? Math.max(1, Math.min(10, Number(meta.maxAttempts))) : 3;
+            if (attempts >= maxAttempts) {
+                upsertTaskMeta(id, { ...meta, status: 'failed', completedAt: new Date().toISOString(), error: meta?.error || 'Stuck in picked_up (max attempts reached)' });
+                appendTaskLog(id, 'Auto-failed: stuck in picked_up (max attempts)');
+                continue;
+            }
+            upsertTaskMeta(id, { ...meta, status: 'run_requested', error: meta?.error || 'Recovered from stuck picked_up' });
+            appendTaskLog(id, 'Auto-requeued: recovered from stuck picked_up');
+        }
         const byPriority = (a, b) => {
             const ma = metaMap[String(a?.id)] || {};
             const mb = metaMap[String(b?.id)] || {};
@@ -3356,6 +3384,25 @@ async function taskWorkerTick() {
                 sessionKey: runEntry?.sessionKey ? String(runEntry.sessionKey) : null
             }
         });
+
+        if (runStatus === 'ok') {
+            const nowIso = new Date().toISOString();
+            const metaOk = getTaskMeta(jobId) || meta1;
+            const result = runSummary || metaOk?.result || 'Completed';
+            upsertTaskMeta(jobId, {
+                ...metaOk,
+                status: 'completed',
+                completedAt: nowIso,
+                result,
+                error: null,
+                attempts: 0,
+                lastDecision: { ts: nowIso, decision: 'completed', reason: 'Run status ok', editsApplied: [] }
+            });
+            if (runSummary) appendTaskNarrative(jobId, { role: 'assistant', agentId, text: clipTextBlock(runSummary, 4000) });
+            appendTaskLog(jobId, 'Worker marked completed (run ok)');
+            appendTaskNarrative(jobId, { role: 'system', agentId, text: 'Completed' });
+            return;
+        }
 
         let decision;
         try {
