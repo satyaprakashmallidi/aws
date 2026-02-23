@@ -12,12 +12,24 @@ const Broadcast = () => {
     const [loadingJobs, setLoadingJobs] = useState(false);
     const [activityByJobId, setActivityByJobId] = useState({});
     const [loadingActivity, setLoadingActivity] = useState(false);
+    const [recentJobs, setRecentJobs] = useState([]);
+    const [loadingRecent, setLoadingRecent] = useState(false);
+    const [showTechnical, setShowTechnical] = useState(false);
 
     const createdIds = useMemo(() => new Set(created.map(t => t.id)), [created]);
 
     useEffect(() => {
         fetchAgents();
     }, []);
+
+    useEffect(() => {
+        // Show narration even before a broadcast (history feed).
+        fetchRecent();
+        const interval = setInterval(() => {
+            if (createdIds.size === 0) fetchRecent();
+        }, 15_000);
+        return () => clearInterval(interval);
+    }, [createdIds]);
 
     const fetchAgents = async () => {
         try {
@@ -76,11 +88,26 @@ const Broadcast = () => {
         }
     };
 
+    const fetchRecent = async () => {
+        setLoadingRecent(true);
+        try {
+            const response = await fetch(apiUrl(`/api/tasks?limit=80&includeNarrative=true&includeLog=false&t=${Date.now()}`));
+            if (!response.ok) return;
+            const data = await response.json();
+            setRecentJobs(Array.isArray(data.jobs) ? data.jobs : []);
+        } catch {
+            // ignore
+        } finally {
+            setLoadingRecent(false);
+        }
+    };
+
     const fetchJobs = async () => {
         if (createdIds.size === 0) return;
         setLoadingJobs(true);
         try {
-            const response = await fetch(apiUrl(`/api/tasks?t=${Date.now()}`));
+            const ids = Array.from(createdIds).join(',');
+            const response = await fetch(apiUrl(`/api/tasks?ids=${encodeURIComponent(ids)}&includeNarrative=true&includeLog=false&t=${Date.now()}`));
             if (!response.ok) return;
             const data = await response.json();
             const jobs = Array.isArray(data.jobs) ? data.jobs : [];
@@ -171,13 +198,34 @@ const Broadcast = () => {
                     agentId: n.agentId || task.agentId || 'main',
                     role: n.role || 'assistant',
                     text: n.text || '',
-                    jobId: task.id
+                    jobId: task.id,
+                    taskName: job?.name || task.name || task.id
                 });
             }
         }
         all.sort((a, b) => String(a.ts || '').localeCompare(String(b.ts || '')));
         return all.filter(m => String(m.text || '').trim()).slice(-250);
     }, [created, jobsById]);
+
+    const recentNarrationMessages = useMemo(() => {
+        const all = [];
+        for (const job of (Array.isArray(recentJobs) ? recentJobs : [])) {
+            const narrative = Array.isArray(job?.metadata?.narrative) ? job.metadata.narrative : [];
+            for (const n of narrative) {
+                if (!n || typeof n !== 'object') continue;
+                all.push({
+                    ts: n.ts || null,
+                    agentId: n.agentId || job?.agentId || 'main',
+                    role: n.role || 'assistant',
+                    text: n.text || '',
+                    jobId: job?.id,
+                    taskName: job?.name || job?.id
+                });
+            }
+        }
+        all.sort((a, b) => String(a.ts || '').localeCompare(String(b.ts || '')));
+        return all.filter(m => String(m.text || '').trim()).slice(-250);
+    }, [recentJobs]);
 
     return (
         <div className="grid grid-cols-12 gap-6 h-[calc(100vh-8rem)]">
@@ -263,9 +311,42 @@ const Broadcast = () => {
                 <h2 className="text-xl font-bold text-gray-800 mb-6">Broadcast Status</h2>
 
                 {!created.length && !sending && (
-                    <div className="flex-1 flex flex-col items-center justify-center text-gray-400 border-2 border-dashed border-gray-100 rounded-lg">
-                        <Send className="w-12 h-12 mb-4 opacity-20" />
-                        <p>Select agents and send a task to see progress here</p>
+                    <div className="flex-1 grid grid-cols-1 lg:grid-cols-3 gap-4">
+                        <div className="lg:col-span-2 flex flex-col items-center justify-center text-gray-400 border-2 border-dashed border-gray-100 rounded-lg">
+                            <Send className="w-12 h-12 mb-4 opacity-20" />
+                            <p>Select agents and send a task to see progress here</p>
+                        </div>
+                        <div className="border border-gray-200 rounded-lg bg-white flex flex-col min-h-[24rem]">
+                            <div className="px-4 py-2 border-b border-gray-200 text-sm font-semibold text-gray-800">
+                                AI narration (recent)
+                            </div>
+                            <div className="flex-1 overflow-auto p-4 space-y-3">
+                                {loadingRecent && (
+                                    <div className="text-sm text-gray-500">Loading recent narration…</div>
+                                )}
+                                {!loadingRecent && recentNarrationMessages.length === 0 && (
+                                    <div className="text-sm text-gray-500">No narrated activity yet.</div>
+                                )}
+                                {recentNarrationMessages.map((m, idx) => {
+                                    const role = String(m.role || 'assistant');
+                                    const isUser = role === 'user';
+                                    const isSystem = role === 'system';
+                                    const bubble = isUser
+                                        ? 'bg-blue-50 border-blue-100'
+                                        : isSystem
+                                            ? 'bg-gray-50 border-gray-200'
+                                            : 'bg-white border-gray-200';
+                                    return (
+                                        <div key={`${m.jobId}-${idx}`} className={`border rounded-lg p-3 ${bubble}`}>
+                                            <div className="text-[10px] text-gray-500 mb-1">
+                                                {m.ts || ''}{m.agentId ? ` • ${m.agentId}` : ''}{m.taskName ? ` • ${m.taskName}` : ''}
+                                            </div>
+                                            <div className="text-sm text-gray-800 whitespace-pre-wrap">{m.text}</div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
                     </div>
                 )}
 
@@ -282,18 +363,27 @@ const Broadcast = () => {
                             <div className="text-sm text-gray-600">
                                 Tracking {created.length} task(s). Agents will pick these up automatically.
                             </div>
-                            <button
-                                type="button"
-                                onClick={() => {
-                                    fetchJobs();
-                                    fetchActivity();
-                                }}
-                                disabled={loadingJobs || loadingActivity}
-                                className="text-sm px-3 py-2 rounded border border-gray-200 bg-gray-50 flex items-center gap-2 disabled:opacity-50"
-                            >
-                                <RefreshCw className="w-4 h-4" />
-                                Refresh
-                            </button>
+                            <div className="flex items-center gap-2">
+                                <button
+                                    type="button"
+                                    onClick={() => setShowTechnical(v => !v)}
+                                    className="text-sm px-3 py-2 rounded border border-gray-200 bg-white disabled:opacity-50"
+                                >
+                                    {showTechnical ? 'Hide details' : 'Show details'}
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        fetchJobs();
+                                        fetchActivity();
+                                    }}
+                                    disabled={loadingJobs || loadingActivity}
+                                    className="text-sm px-3 py-2 rounded border border-gray-200 bg-gray-50 flex items-center gap-2 disabled:opacity-50"
+                                >
+                                    <RefreshCw className="w-4 h-4" />
+                                    Refresh
+                                </button>
+                            </div>
                         </div>
 
                         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -303,6 +393,9 @@ const Broadcast = () => {
                                         const job = jobsById?.[task.id];
                                         const status = getStatus(job);
                                         const result = job?.metadata?.result;
+                                        const decisionReason = job?.metadata?.lastDecision?.reason || job?.metadata?.error || '';
+                                        const attempts = job?.metadata?.attempts;
+                                        const maxAttempts = job?.metadata?.maxAttempts;
                                         const item = activityByJobId?.[task.id];
                                         const rootLines = Array.isArray(item?.lines) ? item.lines : [];
                                         const changes = Array.isArray(item?.changes) ? item.changes : [];
@@ -319,19 +412,33 @@ const Broadcast = () => {
                                                     </span>
                                                 </div>
 
+                                                {(typeof attempts === 'number' || decisionReason) && (
+                                                    <div className="mt-2 text-xs text-gray-600">
+                                                        {typeof attempts === 'number' && (
+                                                            <span>
+                                                                attempt {attempts}/{maxAttempts || 3}
+                                                            </span>
+                                                        )}
+                                                        {typeof attempts === 'number' && decisionReason ? ' • ' : ''}
+                                                        {decisionReason ? (
+                                                            <span className="line-clamp-1">{String(decisionReason)}</span>
+                                                        ) : null}
+                                                    </div>
+                                                )}
+
                                                 {result && (
                                                     <div className="mt-3 bg-white p-3 rounded border border-gray-200 text-xs font-mono text-gray-800 whitespace-pre-wrap max-h-40 overflow-auto">
                                                         {result}
                                                     </div>
                                                 )}
 
-                                                {rootLines.length > 0 && (
+                                                {showTechnical && rootLines.length > 0 && (
                                                     <div className="mt-3 bg-white p-3 rounded border border-gray-200 text-[11px] font-mono text-gray-700 whitespace-pre-wrap max-h-40 overflow-auto">
                                                         {rootLines.slice(-18).join('\n')}
                                                     </div>
                                                 )}
 
-                                                {changes.length > 0 && (
+                                                {showTechnical && changes.length > 0 && (
                                                     <div className="mt-3 bg-white p-3 rounded border border-gray-200">
                                                         <div className="text-[10px] font-semibold text-gray-600 mb-2">Memory changes</div>
                                                         <div className="space-y-2">
@@ -356,7 +463,7 @@ const Broadcast = () => {
                                                     </div>
                                                 )}
 
-                                                {children.map((c) => {
+                                                {showTechnical && children.map((c) => {
                                                     const childLines = Array.isArray(c?.lines) ? c.lines : [];
                                                     const childChanges = Array.isArray(c?.changes) ? c.changes : [];
                                                     if (!childLines.length) return null;
@@ -401,14 +508,16 @@ const Broadcast = () => {
                                     })}
                                 </div>
 
-                                <div className="border border-gray-200 rounded-lg bg-white">
-                                    <div className="px-4 py-2 border-b border-gray-200 text-sm font-semibold text-gray-800">
-                                        Agent activity (raw)
+                                {showTechnical && (
+                                    <div className="border border-gray-200 rounded-lg bg-white">
+                                        <div className="px-4 py-2 border-b border-gray-200 text-sm font-semibold text-gray-800">
+                                            Agent activity (raw)
+                                        </div>
+                                        <pre className="p-4 text-xs text-gray-700 whitespace-pre-wrap max-h-64 overflow-auto">
+                                            {activityLines.length ? activityLines.join('\n') : 'Waiting for agent activity…'}
+                                        </pre>
                                     </div>
-                                    <pre className="p-4 text-xs text-gray-700 whitespace-pre-wrap max-h-64 overflow-auto">
-                                        {activityLines.length ? activityLines.join('\n') : 'Waiting for agent activity…'}
-                                    </pre>
-                                </div>
+                                )}
                             </div>
 
                             <div className="border border-gray-200 rounded-lg bg-white flex flex-col min-h-[24rem]">
@@ -431,7 +540,7 @@ const Broadcast = () => {
                                         return (
                                             <div key={`${m.jobId}-${idx}`} className={`border rounded-lg p-3 ${bubble}`}>
                                                 <div className="text-[10px] text-gray-500 mb-1">
-                                                    {m.ts || ''}{m.agentId ? ` • ${m.agentId}` : ''}
+                                                    {m.ts || ''}{m.agentId ? ` • ${m.agentId}` : ''}{m.taskName ? ` • ${m.taskName}` : ''}
                                                 </div>
                                                 <div className="text-sm text-gray-800 whitespace-pre-wrap">{m.text}</div>
                                             </div>

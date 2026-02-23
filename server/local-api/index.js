@@ -2467,7 +2467,45 @@ app.get('/api/chat', async (req, res) => {
 
 app.get('/api/tasks', async (req, res) => {
     try {
-        const jobs = await listCronJobs({ includeDisabled: true });
+        const idsRaw = String(req.query?.ids || '').trim();
+        const ids = idsRaw
+            ? idsRaw.split(',').map(s => s.trim()).filter(Boolean).slice(0, 200)
+            : null;
+
+        const limitRaw = req.query?.limit ? Number(req.query.limit) : 0;
+        const limit = Number.isFinite(limitRaw) ? Math.max(0, Math.min(2000, Math.floor(limitRaw))) : 0;
+
+        const includeNarrative = String(req.query?.includeNarrative || 'true') !== 'false';
+        const includeLog = String(req.query?.includeLog || 'true') !== 'false';
+
+        const jobsAll = await listCronJobs({ includeDisabled: true });
+        let jobs = Array.isArray(jobsAll) ? jobsAll : [];
+
+        if (ids) {
+            const set = new Set(ids.map(String));
+            jobs = jobs.filter(j => set.has(String(j?.id)));
+        }
+
+        jobs.sort((a, b) => {
+            const ta = coerceTimeMs(a?.metadata?.updatedAt || a?.updatedAt || a?.state?.lastRunAtMs || a?.updatedAtMs || a?.createdAtMs);
+            const tb = coerceTimeMs(b?.metadata?.updatedAt || b?.updatedAt || b?.state?.lastRunAtMs || b?.updatedAtMs || b?.createdAtMs);
+            return tb - ta;
+        });
+
+        if (limit > 0) jobs = jobs.slice(0, limit);
+
+        if (!includeNarrative || !includeLog) {
+            jobs = jobs.map((j) => {
+                if (!j || typeof j !== 'object') return j;
+                const meta = j?.metadata && typeof j.metadata === 'object' ? { ...j.metadata } : j?.metadata;
+                if (meta && typeof meta === 'object') {
+                    if (!includeNarrative) delete meta.narrative;
+                    if (!includeLog) delete meta.log;
+                }
+                return { ...j, metadata: meta };
+            });
+        }
+
         res.json({ jobs });
     } catch (error) {
         res.status(500).json({ error: error.message });
