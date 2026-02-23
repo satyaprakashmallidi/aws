@@ -36,7 +36,7 @@ const AgentSidebar = ({ onAgentClick, selectedAgentId }) => {
     }
 
     return (
-        <div className="rounded-xl border border-slate-200 bg-white shadow-sm flex flex-col overflow-hidden lg:sticky lg:top-6 lg:max-h-[calc(100dvh-10rem)]">
+        <div className="h-full rounded-xl border border-slate-200 bg-white shadow-sm flex flex-col overflow-hidden lg:sticky lg:top-6 lg:max-h-full">
             <div className="p-4 border-b border-gray-100 flex justify-between items-center">
                 <h2 className="text-lg font-bold text-gray-800 flex items-center gap-2">
                     <Users className="w-5 h-5 text-blue-600" aria-hidden="true" />

@@ -43,7 +43,7 @@ const Header = () => {
     ];
 
     return (
-        <header className="bg-slate-950 text-white shadow">
+        <header className="sticky top-0 z-50 shrink-0 bg-slate-950 text-white shadow">
             <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
                 <div className="flex h-16 items-center justify-between gap-3">
                     <div className="flex min-w-0 items-center gap-4">

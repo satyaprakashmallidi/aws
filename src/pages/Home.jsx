@@ -18,7 +18,7 @@ const Home = () => {
     };
 
     return (
-        <div className="flex min-h-[calc(100dvh-10rem)] flex-col gap-6 lg:flex-row">
+        <div className="flex h-full min-h-0 flex-col gap-6 lg:flex-row">
             <aside className="w-full shrink-0 lg:w-80">
                 <AgentSidebar
                     onAgentClick={handleAgentClick}
@@ -26,7 +26,7 @@ const Home = () => {
                 />
             </aside>
 
-            <main className="min-w-0 flex-1 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+            <main className="min-w-0 min-h-0 flex-1 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
                 <KanbanBoard />
             </main>
 

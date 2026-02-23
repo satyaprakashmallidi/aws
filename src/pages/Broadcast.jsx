@@ -206,9 +206,9 @@ const Broadcast = () => {
     }, [feedMessages.length, sending]);
 
     return (
-        <div className="flex min-h-[calc(100dvh-10rem)] flex-col gap-6 lg:grid lg:grid-cols-12">
+        <div className="flex h-full min-h-0 flex-col gap-6 lg:grid lg:grid-cols-12">
             {/* Left: Task Composition */}
-            <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm lg:col-span-4 flex flex-col">
+            <div className="min-h-0 rounded-xl border border-slate-200 bg-white p-6 shadow-sm lg:col-span-4 flex flex-col">
                 <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center gap-2">
                     <Send className="w-5 h-5 text-blue-600" aria-hidden="true" />
                     New Broadcast
@@ -287,7 +287,7 @@ const Broadcast = () => {
             </div>
 
             {/* Right: Chat Feed (no separate status cards) */}
-            <div className="min-w-0 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm lg:col-span-8 flex flex-col">
+            <div className="min-h-0 min-w-0 flex-1 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm lg:col-span-8 flex flex-col">
                 <div className="p-4 border-b border-gray-100 flex items-center justify-between">
                     <div>
                         <div className="text-lg font-bold text-gray-800">Broadcast feed</div>
@@ -311,7 +311,7 @@ const Broadcast = () => {
                     </button>
                 </div>
 
-                <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-50/50">
+                <div className="min-h-0 flex-1 overflow-y-auto p-4 space-y-4 bg-gray-50/50">
                     {feedLoading && (
                         <div className="flex items-center gap-2 text-sm text-gray-500">
                             <Loader2 className="w-4 h-4 animate-spin motion-reduce:animate-none" aria-hidden="true" />
