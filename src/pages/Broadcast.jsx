@@ -1,33 +1,51 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { apiUrl } from '../lib/apiBase';
-import { Send, Loader2, RefreshCw } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import { Bot, RefreshCw, Send, User, Loader2 } from 'lucide-react';
 
 const Broadcast = () => {
     const [agents, setAgents] = useState([]);
     const [selectedAgents, setSelectedAgents] = useState([]);
     const [message, setMessage] = useState('');
+
     const [sending, setSending] = useState(false);
     const [created, setCreated] = useState([]);
+    const createdIds = useMemo(() => new Set(created.map(t => t.id)), [created]);
+
     const [jobsById, setJobsById] = useState({});
     const [loadingJobs, setLoadingJobs] = useState(false);
-    const [activityByJobId, setActivityByJobId] = useState({});
-    const [loadingActivity, setLoadingActivity] = useState(false);
+
     const [recentJobs, setRecentJobs] = useState([]);
     const [loadingRecent, setLoadingRecent] = useState(false);
-    const [showTechnical, setShowTechnical] = useState(false);
 
-    const createdIds = useMemo(() => new Set(created.map(t => t.id)), [created]);
+    const endRef = useRef(null);
+
+    const scrollToBottom = (behavior = 'auto') => {
+        const el = endRef.current;
+        if (!el) return;
+        el.scrollIntoView({ behavior, block: 'end' });
+    };
 
     useEffect(() => {
         fetchAgents();
     }, []);
 
     useEffect(() => {
-        // Show narration even before a broadcast (history feed).
         fetchRecent();
         const interval = setInterval(() => {
             if (createdIds.size === 0) fetchRecent();
         }, 15_000);
+        return () => clearInterval(interval);
+    }, [createdIds]);
+
+    useEffect(() => {
+        if (createdIds.size === 0) return;
+        fetchJobs();
+        const interval = setInterval(() => {
+            fetchJobs();
+            fetch(apiUrl('/api/heartbeat'), { method: 'POST' }).catch(() => { /* ignore */ });
+        }, 10_000);
         return () => clearInterval(interval);
     }, [createdIds]);
 
@@ -36,7 +54,6 @@ const Broadcast = () => {
             const response = await fetch(apiUrl('/api/agents'));
             const data = await response.json();
             setAgents(data.agents || []);
-            // Select all by default
             setSelectedAgents((data.agents || []).map(a => a.id));
         } catch (error) {
             console.error('Failed to fetch agents:', error);
@@ -44,19 +61,14 @@ const Broadcast = () => {
     };
 
     const handleSelectAll = (checked) => {
-        if (checked) {
-            setSelectedAgents(agents.map(a => a.id));
-        } else {
-            setSelectedAgents([]);
-        }
+        setSelectedAgents(checked ? agents.map(a => a.id) : []);
     };
 
     const handleAgentToggle = (agentId) => {
-        if (selectedAgents.includes(agentId)) {
-            setSelectedAgents(selectedAgents.filter(id => id !== agentId));
-        } else {
-            setSelectedAgents([...selectedAgents, agentId]);
-        }
+        setSelectedAgents((prev) => prev.includes(agentId)
+            ? prev.filter(id => id !== agentId)
+            : [...prev, agentId]
+        );
     };
 
     const handleBroadcast = async (e) => {
@@ -71,10 +83,7 @@ const Broadcast = () => {
             const response = await fetch(apiUrl('/api/broadcast'), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    message,
-                    agentIds: selectedAgents
-                })
+                body: JSON.stringify({ message, agentIds: selectedAgents })
             });
 
             const data = await response.json();
@@ -123,68 +132,6 @@ const Broadcast = () => {
         }
     };
 
-    const fetchActivity = async () => {
-        if (createdIds.size === 0) return;
-        setLoadingActivity(true);
-        try {
-            const ids = Array.from(createdIds).join(',');
-            const response = await fetch(apiUrl(`/api/tasks/activity?ids=${encodeURIComponent(ids)}&limit=500&t=${Date.now()}`));
-            if (!response.ok) return;
-            const data = await response.json();
-            const items = Array.isArray(data.items) ? data.items : [];
-            const next = {};
-            for (const item of items) {
-                if (item?.jobId) next[item.jobId] = item;
-            }
-            setActivityByJobId(next);
-        } catch {
-            // ignore
-        } finally {
-            setLoadingActivity(false);
-        }
-    };
-
-    useEffect(() => {
-        if (createdIds.size === 0) return;
-        fetchJobs();
-        fetchActivity();
-        const interval = setInterval(() => {
-            fetchJobs();
-            fetchActivity();
-            fetch(apiUrl('/api/heartbeat'), { method: 'POST' }).catch(() => { /* ignore */ });
-        }, 10_000);
-        return () => clearInterval(interval);
-    }, [createdIds]);
-
-    const getStatus = (job) => job?.metadata?.status || job?.status || 'unknown';
-    const statusClass = (status) => {
-        const s = String(status || '').toLowerCase();
-        if (s.includes('completed')) return 'bg-green-100 text-green-700 border-green-200';
-        if (s.includes('picked') || s.includes('active') || s.includes('run')) return 'bg-blue-100 text-blue-700 border-blue-200';
-        if (s.includes('review') || s.includes('failed') || s.includes('error')) return 'bg-red-100 text-red-700 border-red-200';
-        if (s.includes('assigned')) return 'bg-amber-100 text-amber-800 border-amber-200';
-        return 'bg-gray-100 text-gray-700 border-gray-200';
-    };
-
-    const activityLines = useMemo(() => {
-        const lines = [];
-        for (const task of created) {
-            const item = activityByJobId?.[task.id];
-            const root = Array.isArray(item?.lines) ? item.lines : [];
-            for (const l of root.slice(-30)) lines.push(`[${task.agentId}] ${l}`);
-            const changes = Array.isArray(item?.changes) ? item.changes : [];
-            for (const ch of changes.slice(-10)) lines.push(`[${task.agentId}] ${ch.summary}`);
-            const children = Array.isArray(item?.children) ? item.children : [];
-            for (const c of children) {
-                const childLines = Array.isArray(c?.lines) ? c.lines : [];
-                for (const l of childLines.slice(-10)) lines.push(`[${task.agentId} child] ${l}`);
-                const childChanges = Array.isArray(c?.changes) ? c.changes : [];
-                for (const ch of childChanges.slice(-6)) lines.push(`[${task.agentId} child] ${ch.summary}`);
-            }
-        }
-        return lines.slice(-400);
-    }, [created, activityByJobId]);
-
     const narrationMessages = useMemo(() => {
         const all = [];
         for (const task of created) {
@@ -192,9 +139,8 @@ const Broadcast = () => {
             const narrative = Array.isArray(job?.metadata?.narrative) ? job.metadata.narrative : [];
             for (const n of narrative) {
                 if (!n || typeof n !== 'object') continue;
-                const ts = n.ts || null;
                 all.push({
-                    ts,
+                    ts: n.ts || null,
                     agentId: n.agentId || task.agentId || 'main',
                     role: n.role || 'assistant',
                     text: n.text || '',
@@ -226,6 +172,14 @@ const Broadcast = () => {
         all.sort((a, b) => String(a.ts || '').localeCompare(String(b.ts || '')));
         return all.filter(m => String(m.text || '').trim()).slice(-250);
     }, [recentJobs]);
+
+    const feedMessages = createdIds.size > 0 ? narrationMessages : recentNarrationMessages;
+    const feedLoading = createdIds.size > 0 ? loadingJobs : loadingRecent;
+    const feedTitle = createdIds.size > 0 ? `Tracking ${created.length} task(s)` : 'Recent activity';
+
+    useEffect(() => {
+        scrollToBottom('auto');
+    }, [feedMessages.length, sending]);
 
     return (
         <div className="grid grid-cols-12 gap-6 h-[calc(100vh-8rem)]">
@@ -306,251 +260,128 @@ const Broadcast = () => {
                 </form>
             </div>
 
-            {/* Right: Results Dashboard */}
-            <div className="col-span-8 bg-white rounded-lg shadow p-6 flex flex-col">
-                <h2 className="text-xl font-bold text-gray-800 mb-6">Broadcast Status</h2>
-
-                {!created.length && !sending && (
-                    <div className="flex-1 grid grid-cols-1 lg:grid-cols-3 gap-4">
-                        <div className="lg:col-span-2 flex flex-col items-center justify-center text-gray-400 border-2 border-dashed border-gray-100 rounded-lg">
-                            <Send className="w-12 h-12 mb-4 opacity-20" />
-                            <p>Select agents and send a task to see progress here</p>
-                        </div>
-                        <div className="border border-gray-200 rounded-lg bg-white flex flex-col min-h-[24rem]">
-                            <div className="px-4 py-2 border-b border-gray-200 text-sm font-semibold text-gray-800">
-                                AI narration (recent)
-                            </div>
-                            <div className="flex-1 overflow-auto p-4 space-y-3">
-                                {loadingRecent && (
-                                    <div className="text-sm text-gray-500">Loading recent narration…</div>
-                                )}
-                                {!loadingRecent && recentNarrationMessages.length === 0 && (
-                                    <div className="text-sm text-gray-500">No narrated activity yet.</div>
-                                )}
-                                {recentNarrationMessages.map((m, idx) => {
-                                    const role = String(m.role || 'assistant');
-                                    const isUser = role === 'user';
-                                    const isSystem = role === 'system';
-                                    const bubble = isUser
-                                        ? 'bg-blue-50 border-blue-100'
-                                        : isSystem
-                                            ? 'bg-gray-50 border-gray-200'
-                                            : 'bg-white border-gray-200';
-                                    return (
-                                        <div key={`${m.jobId}-${idx}`} className={`border rounded-lg p-3 ${bubble}`}>
-                                            <div className="text-[10px] text-gray-500 mb-1">
-                                                {m.ts || ''}{m.agentId ? ` • ${m.agentId}` : ''}{m.taskName ? ` • ${m.taskName}` : ''}
-                                            </div>
-                                            <div className="text-sm text-gray-800 whitespace-pre-wrap">{m.text}</div>
-                                        </div>
-                                    );
-                                })}
-                            </div>
+            {/* Right: Chat Feed (no separate status cards) */}
+            <div className="col-span-8 bg-white rounded-lg shadow flex flex-col overflow-hidden">
+                <div className="p-4 border-b border-gray-100 flex items-center justify-between">
+                    <div>
+                        <div className="text-lg font-bold text-gray-800">Broadcast feed</div>
+                        <div className="text-xs text-gray-500">
+                            {feedTitle}
                         </div>
                     </div>
-                )}
 
-                {sending && (
-                    <div className="flex-1 flex flex-col items-center justify-center">
-                        <Loader2 className="w-12 h-12 text-blue-600 animate-spin mb-4" />
-                        <p className="text-gray-600 font-medium">Creating tasks for agents…</p>
-                    </div>
-                )}
+                    <button
+                        type="button"
+                        onClick={() => {
+                            if (createdIds.size > 0) fetchJobs();
+                            else fetchRecent();
+                        }}
+                        disabled={feedLoading}
+                        className="text-sm px-3 py-2 rounded border border-gray-200 bg-gray-50 flex items-center gap-2 disabled:opacity-50"
+                        title="Refresh"
+                    >
+                        <RefreshCw className="w-4 h-4" />
+                        Refresh
+                    </button>
+                </div>
 
-                {created.length > 0 && (
-                    <div className="flex-1 overflow-y-auto space-y-6">
-                        <div className="flex items-center justify-between">
-                            <div className="text-sm text-gray-600">
-                                Tracking {created.length} task(s). Agents will pick these up automatically.
-                            </div>
-                            <div className="flex items-center gap-2">
-                                <button
-                                    type="button"
-                                    onClick={() => setShowTechnical(v => !v)}
-                                    className="text-sm px-3 py-2 rounded border border-gray-200 bg-white disabled:opacity-50"
-                                >
-                                    {showTechnical ? 'Hide details' : 'Show details'}
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => {
-                                        fetchJobs();
-                                        fetchActivity();
-                                    }}
-                                    disabled={loadingJobs || loadingActivity}
-                                    className="text-sm px-3 py-2 rounded border border-gray-200 bg-gray-50 flex items-center gap-2 disabled:opacity-50"
-                                >
-                                    <RefreshCw className="w-4 h-4" />
-                                    Refresh
-                                </button>
-                            </div>
+                <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-50/50">
+                    {feedLoading && (
+                        <div className="flex items-center gap-2 text-sm text-gray-500">
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                            Loading…
                         </div>
+                    )}
 
-                        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-                            <div className="lg:col-span-2 space-y-4">
-                                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                                    {created.map((task) => {
-                                        const job = jobsById?.[task.id];
-                                        const status = getStatus(job);
-                                        const result = job?.metadata?.result;
-                                        const decisionReason = job?.metadata?.lastDecision?.reason || job?.metadata?.error || '';
-                                        const attempts = job?.metadata?.attempts;
-                                        const maxAttempts = job?.metadata?.maxAttempts;
-                                        const item = activityByJobId?.[task.id];
-                                        const rootLines = Array.isArray(item?.lines) ? item.lines : [];
-                                        const changes = Array.isArray(item?.changes) ? item.changes : [];
-                                        const children = Array.isArray(item?.children) ? item.children : [];
-                                        return (
-                                            <div key={task.id} className="border rounded-lg p-4 bg-gray-50">
-                                                <div className="flex items-start justify-between gap-3">
-                                                    <div>
-                                                        <div className="font-semibold text-gray-800">{task.agentId}</div>
-                                                        <div className="text-xs text-gray-500 mt-0.5">{task.name || task.id}</div>
-                                                    </div>
-                                                    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold border ${statusClass(status)}`}>
-                                                        {status}
-                                                    </span>
-                                                </div>
+                    {feedMessages.length === 0 && !sending && !feedLoading && (
+                        <div className="flex flex-col items-center justify-center h-full text-gray-400">
+                            <Bot className="w-16 h-16 mb-4 opacity-20" />
+                            <p>No activity yet. Send a broadcast to start.</p>
+                        </div>
+                    )}
 
-                                                {(typeof attempts === 'number' || decisionReason) && (
-                                                    <div className="mt-2 text-xs text-gray-600">
-                                                        {typeof attempts === 'number' && (
-                                                            <span>
-                                                                attempt {attempts}/{maxAttempts || 3}
-                                                            </span>
-                                                        )}
-                                                        {typeof attempts === 'number' && decisionReason ? ' • ' : ''}
-                                                        {decisionReason ? (
-                                                            <span className="line-clamp-1">{String(decisionReason)}</span>
-                                                        ) : null}
-                                                    </div>
-                                                )}
+                    {feedMessages.map((m, idx) => {
+                        const role = String(m.role || 'assistant');
+                        const isUser = role === 'user';
+                        const isSystem = role === 'system';
 
-                                                {result && (
-                                                    <div className="mt-3 bg-white p-3 rounded border border-gray-200 text-xs font-mono text-gray-800 whitespace-pre-wrap max-h-40 overflow-auto">
-                                                        {result}
-                                                    </div>
-                                                )}
-
-                                                {showTechnical && rootLines.length > 0 && (
-                                                    <div className="mt-3 bg-white p-3 rounded border border-gray-200 text-[11px] font-mono text-gray-700 whitespace-pre-wrap max-h-40 overflow-auto">
-                                                        {rootLines.slice(-18).join('\n')}
-                                                    </div>
-                                                )}
-
-                                                {showTechnical && changes.length > 0 && (
-                                                    <div className="mt-3 bg-white p-3 rounded border border-gray-200">
-                                                        <div className="text-[10px] font-semibold text-gray-600 mb-2">Memory changes</div>
-                                                        <div className="space-y-2">
-                                                            {changes.slice(-3).map((ch, idx) => (
-                                                                <div key={`${ch.path}-${idx}`} className="border border-gray-100 rounded p-2 bg-gray-50">
-                                                                    <div className="text-[10px] font-semibold text-gray-700">
-                                                                        {ch.tool}: {ch.path}
-                                                                    </div>
-                                                                    {ch.preview && (
-                                                                        <pre className="mt-1 text-[11px] font-mono text-gray-700 whitespace-pre-wrap max-h-28 overflow-auto">
-                                                                            {ch.preview}
-                                                                        </pre>
-                                                                    )}
-                                                                    {ch.diff && (
-                                                                        <pre className="mt-1 text-[11px] font-mono text-gray-700 whitespace-pre-wrap max-h-28 overflow-auto">
-                                                                            {ch.diff}
-                                                                        </pre>
-                                                                    )}
-                                                                </div>
-                                                            ))}
-                                                        </div>
-                                                    </div>
-                                                )}
-
-                                                {showTechnical && children.map((c) => {
-                                                    const childLines = Array.isArray(c?.lines) ? c.lines : [];
-                                                    const childChanges = Array.isArray(c?.changes) ? c.changes : [];
-                                                    if (!childLines.length) return null;
-                                                    return (
-                                                        <div key={c.sessionId} className="mt-3 bg-white p-3 rounded border border-gray-200">
-                                                            <div className="text-[10px] font-semibold text-gray-600 mb-2">
-                                                                Delegated session: {c.agentId ? `${c.agentId}:` : ''}{c.sessionId}
-                                                            </div>
-                                                            <pre className="text-[11px] font-mono text-gray-700 whitespace-pre-wrap max-h-32 overflow-auto">
-                                                                {childLines.slice(-12).join('\n')}
-                                                            </pre>
-
-                                                            {childChanges.length > 0 && (
-                                                                <div className="mt-3">
-                                                                    <div className="text-[10px] font-semibold text-gray-600 mb-2">Child memory changes</div>
-                                                                    <div className="space-y-2">
-                                                                        {childChanges.slice(-2).map((ch, idx) => (
-                                                                            <div key={`${ch.path}-${idx}`} className="border border-gray-100 rounded p-2 bg-gray-50">
-                                                                                <div className="text-[10px] font-semibold text-gray-700">
-                                                                                    {ch.tool}: {ch.path}
-                                                                                </div>
-                                                                                {ch.preview && (
-                                                                                    <pre className="mt-1 text-[11px] font-mono text-gray-700 whitespace-pre-wrap max-h-24 overflow-auto">
-                                                                                        {ch.preview}
-                                                                                    </pre>
-                                                                                )}
-                                                                                {ch.diff && (
-                                                                                    <pre className="mt-1 text-[11px] font-mono text-gray-700 whitespace-pre-wrap max-h-24 overflow-auto">
-                                                                                        {ch.diff}
-                                                                                    </pre>
-                                                                                )}
-                                                                            </div>
-                                                                        ))}
-                                                                    </div>
-                                                                </div>
-                                                            )}
-                                                        </div>
-                                                    );
-                                                })}
-                                            </div>
-                                        );
-                                    })}
+                        const avatar = isUser
+                            ? (
+                                <div className="w-8 h-8 rounded-full bg-gray-200 flex items-center justify-center text-gray-600 flex-shrink-0 mt-1">
+                                    <User className="w-5 h-5" />
                                 </div>
+                            )
+                            : (
+                                <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 mt-1 ${isSystem ? 'bg-gray-200 text-gray-700' : 'bg-blue-100 text-blue-600'}`}>
+                                    <Bot className="w-5 h-5" />
+                                </div>
+                            );
 
-                                {showTechnical && (
-                                    <div className="border border-gray-200 rounded-lg bg-white">
-                                        <div className="px-4 py-2 border-b border-gray-200 text-sm font-semibold text-gray-800">
-                                            Agent activity (raw)
-                                        </div>
-                                        <pre className="p-4 text-xs text-gray-700 whitespace-pre-wrap max-h-64 overflow-auto">
-                                            {activityLines.length ? activityLines.join('\n') : 'Waiting for agent activity…'}
-                                        </pre>
+                        const bubbleClass = isUser
+                            ? 'bg-blue-600 text-white rounded-tr-none'
+                            : isSystem
+                                ? 'bg-gray-50 text-gray-700 border border-gray-200 rounded-tl-none'
+                                : 'bg-white text-gray-800 border border-gray-100 rounded-tl-none';
+
+                        const metaClass = isUser ? 'text-blue-100' : 'text-gray-500';
+
+                        return (
+                            <div
+                                key={`${m.jobId}-${idx}`}
+                                className={`flex gap-3 ${isUser ? 'justify-end' : 'justify-start'}`}
+                            >
+                                {!isUser && avatar}
+                                <div className={`max-w-[75%] p-3 rounded-lg shadow-sm text-sm ${bubbleClass}`}>
+                                    <div className={`text-[10px] mb-1 ${metaClass}`}>
+                                        {m.ts || ''}{m.agentId ? ` • ${m.agentId}` : ''}{m.taskName ? ` • ${m.taskName}` : ''}
                                     </div>
-                                )}
-                            </div>
-
-                            <div className="border border-gray-200 rounded-lg bg-white flex flex-col min-h-[24rem]">
-                                <div className="px-4 py-2 border-b border-gray-200 text-sm font-semibold text-gray-800">
-                                    AI narration
-                                </div>
-                                <div className="flex-1 overflow-auto p-4 space-y-3">
-                                    {narrationMessages.length === 0 && (
-                                        <div className="text-sm text-gray-500">Waiting for narrated steps…</div>
+                                    {isUser ? (
+                                        <div className="whitespace-pre-wrap">{m.text}</div>
+                                    ) : (
+                                        <ReactMarkdown
+                                            remarkPlugins={[remarkGfm]}
+                                            components={{
+                                                h1: ({ children }) => <h1 className="text-lg font-bold mb-2 mt-1">{children}</h1>,
+                                                h2: ({ children }) => <h2 className="text-base font-bold mb-2 mt-1">{children}</h2>,
+                                                h3: ({ children }) => <h3 className="text-sm font-bold mb-1 mt-1">{children}</h3>,
+                                                p: ({ children }) => <p className="mb-2 last:mb-0 leading-relaxed">{children}</p>,
+                                                ul: ({ children }) => <ul className="list-disc ml-4 mb-2 space-y-1">{children}</ul>,
+                                                ol: ({ children }) => <ol className="list-decimal ml-4 mb-2 space-y-1">{children}</ol>,
+                                                li: ({ children }) => <li className="leading-relaxed">{children}</li>,
+                                                strong: ({ children }) => <strong className="font-bold">{children}</strong>,
+                                                em: ({ children }) => <em className="italic">{children}</em>,
+                                                code: ({ inline, children }) => inline
+                                                    ? <code className="bg-gray-100 text-red-600 px-1.5 py-0.5 rounded text-xs font-mono">{children}</code>
+                                                    : <code className="block bg-gray-900 text-green-400 p-3 rounded-lg text-xs font-mono overflow-x-auto my-2 whitespace-pre">{children}</code>,
+                                                pre: ({ children }) => <pre className="my-2">{children}</pre>,
+                                                a: ({ href, children }) => <a href={href} target="_blank" rel="noopener noreferrer" className="text-blue-600 underline hover:text-blue-800">{children}</a>,
+                                                blockquote: ({ children }) => <blockquote className="border-l-4 border-blue-300 pl-3 my-2 italic text-gray-600">{children}</blockquote>,
+                                            }}
+                                        >
+                                            {m.text}
+                                        </ReactMarkdown>
                                     )}
-                                    {narrationMessages.map((m, idx) => {
-                                        const role = String(m.role || 'assistant');
-                                        const isUser = role === 'user';
-                                        const isSystem = role === 'system';
-                                        const bubble = isUser
-                                            ? 'bg-blue-50 border-blue-100'
-                                            : isSystem
-                                                ? 'bg-gray-50 border-gray-200'
-                                                : 'bg-white border-gray-200';
-                                        return (
-                                            <div key={`${m.jobId}-${idx}`} className={`border rounded-lg p-3 ${bubble}`}>
-                                                <div className="text-[10px] text-gray-500 mb-1">
-                                                    {m.ts || ''}{m.agentId ? ` • ${m.agentId}` : ''}{m.taskName ? ` • ${m.taskName}` : ''}
-                                                </div>
-                                                <div className="text-sm text-gray-800 whitespace-pre-wrap">{m.text}</div>
-                                            </div>
-                                        );
-                                    })}
                                 </div>
+                                {isUser && avatar}
+                            </div>
+                        );
+                    })}
+
+                    {sending && (
+                        <div className="flex justify-start gap-3">
+                            <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 flex-shrink-0 mt-1">
+                                <Bot className="w-5 h-5" />
+                            </div>
+                            <div className="bg-white p-3 rounded-lg rounded-tl-none border border-gray-100 shadow-sm flex items-center gap-1">
+                                <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></span>
+                                <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce delay-75"></span>
+                                <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce delay-150"></span>
                             </div>
                         </div>
-                    </div>
-                )}
+                    )}
+
+                    <div ref={endRef} />
+                </div>
             </div>
         </div>
     );
