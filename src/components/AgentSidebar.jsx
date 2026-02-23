@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { apiUrl } from '../lib/apiBase';
 import { Settings, Circle, Cpu, Users } from 'lucide-react';
 
+const FOCUS_RING = 'focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2';
+
 const AgentSidebar = ({ onAgentClick, selectedAgentId }) => {
     const [agents, setAgents] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -27,17 +29,17 @@ const AgentSidebar = ({ onAgentClick, selectedAgentId }) => {
 
     if (loading) {
         return (
-            <div className="bg-white rounded-lg shadow h-[calc(100vh-8rem)] p-4 flex items-center justify-center">
+            <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm flex items-center justify-center">
                 <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
             </div>
         );
     }
 
     return (
-        <div className="bg-white rounded-lg shadow h-[calc(100vh-8rem)] flex flex-col">
+        <div className="rounded-xl border border-slate-200 bg-white shadow-sm flex flex-col overflow-hidden lg:sticky lg:top-6 lg:max-h-[calc(100dvh-10rem)]">
             <div className="p-4 border-b border-gray-100 flex justify-between items-center">
                 <h2 className="text-lg font-bold text-gray-800 flex items-center gap-2">
-                    <Users className="w-5 h-5 text-blue-600" />
+                    <Users className="w-5 h-5 text-blue-600" aria-hidden="true" />
                     Agents
                 </h2>
                 <span className="bg-blue-100 text-blue-800 text-xs font-medium px-2.5 py-0.5 rounded-full">
@@ -49,7 +51,7 @@ const AgentSidebar = ({ onAgentClick, selectedAgentId }) => {
                 {agents.map((agent) => (
                     <div
                         key={agent.id}
-                        className={`group p-3 rounded-lg border transition-all hover:shadow-md ${selectedAgentId === agent.id
+                        className={`group p-3 rounded-lg border transition-colors transition-shadow hover:shadow-md ${selectedAgentId === agent.id
                                 ? 'border-blue-500 bg-blue-50'
                                 : 'border-gray-200 hover:border-blue-300'
                             }`}
@@ -62,20 +64,22 @@ const AgentSidebar = ({ onAgentClick, selectedAgentId }) => {
                                 <div>
                                     <h3 className="font-semibold text-gray-800 text-sm">{agent.identity?.name || agent.id}</h3>
                                     <div className="flex items-center gap-1">
-                                        <Circle className="w-2 h-2 text-green-500 fill-green-500" />
+                                        <Circle className="w-2 h-2 text-green-500 fill-green-500" aria-hidden="true" />
                                         <span className="text-xs text-gray-500">{agent.status || 'Active'}</span>
                                     </div>
                                 </div>
                             </div>
 
                             <button
+                                type="button"
                                 onClick={(e) => {
                                     e.stopPropagation();
                                     onAgentClick(agent);
                                 }}
-                                className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-100 rounded-md transition-colors"
+                                aria-label={`Edit agent ${agent.identity?.name || agent.id}`}
+                                className={`rounded-md p-1.5 text-gray-500 transition-colors hover:bg-blue-100 hover:text-blue-700 ${FOCUS_RING}`}
                             >
-                                <Settings className="w-4 h-4" />
+                                <Settings className="w-4 h-4" aria-hidden="true" />
                             </button>
                         </div>
 
@@ -86,7 +90,7 @@ const AgentSidebar = ({ onAgentClick, selectedAgentId }) => {
                         )}
 
                         <div className="flex items-center gap-1.5 bg-gray-100 px-2 py-1 rounded text-xs text-gray-600 w-fit">
-                            <Cpu className="w-3 h-3" />
+                            <Cpu className="w-3 h-3" aria-hidden="true" />
                             <span className="truncate max-w-[120px]">{agent.model}</span>
                         </div>
                     </div>

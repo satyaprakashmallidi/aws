@@ -18,17 +18,15 @@ const Home = () => {
     };
 
     return (
-        <div className="grid grid-cols-12 gap-6 h-[calc(100vh-8rem)]">
-            {/* Left Sidebar - Agent List */}
-            <aside className="col-span-3">
+        <div className="flex min-h-[calc(100dvh-10rem)] flex-col gap-6 lg:flex-row">
+            <aside className="w-full shrink-0 lg:w-80">
                 <AgentSidebar
                     onAgentClick={handleAgentClick}
                     selectedAgentId={selectedAgent?.id}
                 />
             </aside>
 
-            {/* Center - Kanban Board */}
-            <main className="col-span-9 bg-white rounded-lg shadow h-full overflow-hidden">
+            <main className="min-w-0 flex-1 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
                 <KanbanBoard />
             </main>
 

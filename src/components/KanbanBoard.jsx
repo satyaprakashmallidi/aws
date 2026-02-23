@@ -120,56 +120,81 @@ const KanbanBoard = () => {
             </div>
 
             {createOpen && (
-                <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={() => !saving && setCreateOpen(false)}>
-                    <div className="bg-white rounded-lg shadow-xl w-full max-w-lg overflow-hidden" onClick={(e) => e.stopPropagation()}>
-                        <div className="px-4 py-3 border-b border-gray-200">
-                            <div className="text-sm font-semibold text-gray-900">Create task</div>
-                            <div className="text-xs text-gray-500">This will run automatically.</div>
-                        </div>
-                        <div className="p-4 space-y-3">
-                            <div>
-                                <div className="text-xs font-medium text-gray-700 mb-1">Task instructions</div>
-                                <textarea
-                                    value={newMessage}
-                                    onChange={(e) => setNewMessage(e.target.value)}
-                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 h-28 resize-none"
-                                    placeholder="Describe the task..."
-                                    disabled={saving}
-                                />
+                <div className="fixed inset-0 z-50 overscroll-contain">
+                    <button
+                        type="button"
+                        aria-label="Close dialog"
+                        className="absolute inset-0 bg-black/40"
+                        onClick={() => !saving && setCreateOpen(false)}
+                    />
+
+                    <div className="relative flex min-h-full items-center justify-center p-4">
+                        <div
+                            role="dialog"
+                            aria-modal="true"
+                            aria-labelledby="create-task-title"
+                            className="w-full max-w-lg overflow-hidden rounded-xl bg-white shadow-xl ring-1 ring-black/5"
+                        >
+                            <div className="border-b border-gray-200 px-4 py-3">
+                                <div id="create-task-title" className="text-sm font-semibold text-gray-900">Create task</div>
+                                <div className="text-xs text-gray-500">This will run automatically.</div>
                             </div>
-                            <div>
-                                <div className="text-xs font-medium text-gray-700 mb-1">Priority</div>
-                                <select
-                                    value={newPriority}
-                                    onChange={(e) => setNewPriority(Number(e.target.value) || 3)}
-                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-white"
+
+                            <div className="space-y-3 p-4">
+                                <div>
+                                    <label htmlFor="task-instructions" className="mb-1 block text-xs font-medium text-gray-700">
+                                        Task instructions
+                                    </label>
+                                    <textarea
+                                        id="task-instructions"
+                                        name="message"
+                                        value={newMessage}
+                                        onChange={(e) => setNewMessage(e.target.value)}
+                                        className="h-28 w-full resize-none rounded-lg border border-gray-300 px-3 py-2 shadow-sm transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 disabled:opacity-60"
+                                        placeholder="Describe the task…"
+                                        disabled={saving}
+                                    />
+                                </div>
+
+                                <div>
+                                    <label htmlFor="task-priority" className="mb-1 block text-xs font-medium text-gray-700">
+                                        Priority
+                                    </label>
+                                    <select
+                                        id="task-priority"
+                                        name="priority"
+                                        value={newPriority}
+                                        onChange={(e) => setNewPriority(Number(e.target.value) || 3)}
+                                        className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 disabled:opacity-60"
+                                        disabled={saving}
+                                    >
+                                        <option value={5}>5 (highest)</option>
+                                        <option value={4}>4</option>
+                                        <option value={3}>3 (normal)</option>
+                                        <option value={2}>2</option>
+                                        <option value={1}>1 (lowest)</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <div className="flex items-center justify-end gap-2 border-t border-gray-200 bg-gray-50 px-4 py-3">
+                                <button
+                                    type="button"
+                                    onClick={() => setCreateOpen(false)}
                                     disabled={saving}
+                                    className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-gray-900 shadow-sm transition-colors hover:bg-gray-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 disabled:opacity-50"
                                 >
-                                    <option value={5}>5 (highest)</option>
-                                    <option value={4}>4</option>
-                                    <option value={3}>3 (normal)</option>
-                                    <option value={2}>2</option>
-                                    <option value={1}>1 (lowest)</option>
-                                </select>
+                                    Cancel
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={handleCreateTask}
+                                    disabled={saving || !String(newMessage || '').trim()}
+                                    className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-blue-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 disabled:opacity-50"
+                                >
+                                    {saving ? 'Creating…' : 'Create'}
+                                </button>
                             </div>
-                        </div>
-                        <div className="px-4 py-3 border-t border-gray-200 flex items-center justify-end gap-2 bg-gray-50">
-                            <button
-                                type="button"
-                                onClick={() => setCreateOpen(false)}
-                                disabled={saving}
-                                className="px-3 py-2 rounded border border-gray-200 bg-white text-sm disabled:opacity-50"
-                            >
-                                Cancel
-                            </button>
-                            <button
-                                type="button"
-                                onClick={handleCreateTask}
-                                disabled={saving || !String(newMessage || '').trim()}
-                                className="px-3 py-2 rounded bg-blue-600 text-white text-sm disabled:opacity-50"
-                            >
-                                {saving ? 'Creating…' : 'Create'}
-                            </button>
                         </div>
                     </div>
                 </div>

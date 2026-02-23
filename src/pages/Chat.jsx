@@ -4,6 +4,8 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Send, Bot, User, Loader2, RefreshCw, ChevronDown, Plus, Wrench } from 'lucide-react';
 
+const FOCUS_RING = 'focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2';
+
 const getOrCreateSessionKey = (agentId) => {
     const storageKey = `openclaw.session.${agentId}`;
     const existing = localStorage.getItem(storageKey);
@@ -624,12 +626,12 @@ const Chat = () => {
     }, [messages, sending]);
 
     return (
-        <div className="flex flex-col h-[calc(100vh-8rem)] bg-white rounded-lg shadow overflow-hidden">
+        <div className="flex min-h-[calc(100dvh-10rem)] flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
             {/* Chat Header */}
             <div className="p-4 border-b border-gray-100 flex justify-between items-center bg-gray-50">
                 <div className="flex items-center gap-3">
                     <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center text-blue-600">
-                        <Bot className="w-6 h-6" />
+                        <Bot className="w-6 h-6" aria-hidden="true" />
                     </div>
                     <div>
                         <h2 className="font-bold text-gray-800">Agent Chat</h2>
@@ -645,7 +647,9 @@ const Chat = () => {
                         <select
                             value={sessionKey}
                             onChange={(e) => setSessionKeyPersisted(e.target.value)}
-                            className="appearance-none bg-white border border-gray-200 rounded-lg px-3 py-2 pr-9 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 min-w-[220px]"
+                            name="session"
+                            aria-label="Session"
+                            className={`min-w-[220px] appearance-none rounded-lg border border-gray-200 bg-white px-3 py-2 pr-9 text-sm font-medium text-gray-700 shadow-sm ${FOCUS_RING}`}
                             disabled={sessionsLoading}
                         >
                             <option value={sessionKey}>{currentSessionLabel()}</option>
@@ -658,23 +662,25 @@ const Chat = () => {
                                 );
                             })}
                         </select>
-                        <ChevronDown className="w-4 h-4 text-gray-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                        <ChevronDown className="w-4 h-4 text-gray-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" aria-hidden="true" />
                     </div>
                     <button
+                        type="button"
                         onClick={createNewSession}
                         disabled={sending || sessionBooting}
-                        className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-colors"
-                        title="New Session"
+                        className={`rounded-full p-2 text-gray-500 transition-colors hover:bg-blue-50 hover:text-blue-700 disabled:opacity-50 ${FOCUS_RING}`}
+                        aria-label="New session"
                     >
-                        <Plus className="w-5 h-5" />
+                        <Plus className="w-5 h-5" aria-hidden="true" />
                     </button>
                     <button
+                        type="button"
                         onClick={() => fetchHistory(sessionKey)}
                         disabled={sending || sessionBooting}
-                        className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-colors"
-                        title="Refresh History"
+                        className={`rounded-full p-2 text-gray-500 transition-colors hover:bg-blue-50 hover:text-blue-700 disabled:opacity-50 ${FOCUS_RING}`}
+                        aria-label="Refresh history"
                     >
-                        <RefreshCw className="w-5 h-5" />
+                        <RefreshCw className="w-5 h-5" aria-hidden="true" />
                     </button>
                 </div>
             </div>
@@ -688,43 +694,43 @@ const Chat = () => {
                 )}
                 {sessionBooting && (
                     <div className="bg-blue-50 border border-blue-200 text-blue-800 px-3 py-2 rounded-md text-sm flex items-center gap-2">
-                        <Loader2 className="w-4 h-4 animate-spin" />
+                        <Loader2 className="w-4 h-4 animate-spin motion-reduce:animate-none" aria-hidden="true" />
                         Setting up a new session… please wait a few seconds.
                     </div>
                 )}
                 {loading ? (
                     <div className="flex items-center justify-center h-full text-gray-400">
-                        <Loader2 className="w-8 h-8 animate-spin" />
+                        <Loader2 className="w-8 h-8 animate-spin motion-reduce:animate-none" aria-hidden="true" />
                     </div>
                 ) : messages.length === 0 ? (
                     <div className="flex flex-col items-center justify-center h-full text-gray-400">
-                        <Bot className="w-16 h-16 mb-4 opacity-20" />
+                        <Bot className="w-16 h-16 mb-4 opacity-20" aria-hidden="true" />
                         <p>No messages yet. Start the conversation!</p>
                     </div>
                 ) : (
                     messages.map((msg, index) => (
                         <div
                             key={index}
-                            className={`flex gap-3 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                            className={`flex min-w-0 gap-3 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
                         >
                             {msg.role === 'assistant' && (
                                 <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 flex-shrink-0 mt-1">
-                                    <Bot className="w-5 h-5" />
+                                    <Bot className="w-5 h-5" aria-hidden="true" />
                                 </div>
                             )}
                             {msg.role === 'tool' && (
                                 <div className="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center text-slate-700 flex-shrink-0 mt-1">
-                                    <Wrench className="w-5 h-5" />
+                                    <Wrench className="w-5 h-5" aria-hidden="true" />
                                 </div>
                             )}
                             {msg.role === 'error' && (
                                 <div className="w-8 h-8 rounded-full bg-red-100 flex items-center justify-center text-red-600 flex-shrink-0 mt-1">
-                                    <Bot className="w-5 h-5" />
+                                    <Bot className="w-5 h-5" aria-hidden="true" />
                                 </div>
                             )}
 
                             <div
-                                className={`max-w-[70%] p-3 rounded-lg shadow-sm text-sm ${msg.role === 'user'
+                                className={`min-w-0 max-w-[70%] p-3 rounded-lg shadow-sm text-sm ${msg.role === 'user'
                                     ? 'bg-blue-600 text-white rounded-tr-none whitespace-pre-wrap'
                                     : msg.role === 'error'
                                         ? 'bg-red-50 text-red-700 border border-red-200 rounded-tl-none'
@@ -766,7 +772,7 @@ const Chat = () => {
 
                             {msg.role === 'user' && (
                                 <div className="w-8 h-8 rounded-full bg-gray-200 flex items-center justify-center text-gray-600 flex-shrink-0 mt-1">
-                                    <User className="w-5 h-5" />
+                                    <User className="w-5 h-5" aria-hidden="true" />
                                 </div>
                             )}
                         </div>
@@ -775,12 +781,12 @@ const Chat = () => {
                 {sending && (
                     <div className="flex justify-start gap-3">
                         <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 flex-shrink-0 mt-1">
-                            <Bot className="w-5 h-5" />
+                            <Bot className="w-5 h-5" aria-hidden="true" />
                         </div>
                         <div className="bg-white p-3 rounded-lg rounded-tl-none border border-gray-100 shadow-sm flex items-center gap-1">
-                            <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></span>
-                            <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce delay-75"></span>
-                            <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce delay-150"></span>
+                            <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce motion-reduce:animate-none"></span>
+                            <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce delay-75 motion-reduce:animate-none"></span>
+                            <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce delay-150 motion-reduce:animate-none"></span>
                         </div>
                     </div>
                 )}
@@ -790,20 +796,24 @@ const Chat = () => {
             {/* Input Area */}
             <form onSubmit={handleSend} className="p-4 bg-white border-t border-gray-100">
                 <div className="flex gap-2">
+                    <label htmlFor="chat-message" className="sr-only">Message</label>
                     <input
+                        id="chat-message"
+                        name="message"
                         type="text"
                         value={input}
                         onChange={(e) => setInput(e.target.value)}
-                        placeholder="Type your message..."
-                        className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
+                        autoComplete="off"
+                        placeholder="Type your message…"
+                        className={`flex-1 rounded-lg border border-gray-300 px-4 py-2 shadow-sm transition-colors ${FOCUS_RING}`}
                         disabled={sending || sessionBooting}
                     />
                     <button
                         type="submit"
                         disabled={!input.trim() || sending || sessionBooting}
-                        className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
+                        className={`flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 font-semibold text-white shadow-sm transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50 ${FOCUS_RING}`}
                     >
-                        <Send className="w-4 h-4" />
+                        <Send className="w-4 h-4" aria-hidden="true" />
                         <span className="hidden sm:inline">Send</span>
                     </button>
                 </div>

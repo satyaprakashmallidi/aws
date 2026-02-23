@@ -112,25 +112,33 @@ const SignUpPage = () => {
                 {step === 'form' && (
                     <form onSubmit={handleSubmit} className="space-y-4">
                         <div>
-                            <label className="block text-xs font-medium text-slate-600 mb-1">Email</label>
+                            <label htmlFor="email" className="block text-xs font-medium text-slate-600 mb-1">Email</label>
                             <input
+                                id="email"
+                                name="email"
                                 type="email"
                                 value={email}
                                 onChange={(e) => setEmail(e.target.value)}
-                                className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-lg text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                autoComplete="email"
+                                spellCheck={false}
+                                className="w-full rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-slate-900 shadow-sm transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
                                 placeholder="you@company.com"
                                 required
                             />
                         </div>
 
                         <div>
-                            <label className="block text-xs font-medium text-slate-600 mb-1">Password</label>
+                            <label htmlFor="password" className="block text-xs font-medium text-slate-600 mb-1">Password</label>
                             <input
+                                id="password"
+                                name="password"
                                 type="password"
                                 value={password}
                                 onChange={(e) => setPassword(e.target.value)}
-                                className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-lg text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                placeholder="••••••••"
+                                autoComplete="new-password"
+                                spellCheck={false}
+                                className="w-full rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-slate-900 shadow-sm transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+                                placeholder="â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢"
                                 required
                             />
                         </div>
@@ -144,9 +152,9 @@ const SignUpPage = () => {
                         <button
                             type="submit"
                             disabled={!isLoaded || loading}
-                            className="w-full px-4 py-2.5 bg-blue-600 rounded-lg font-semibold text-white hover:bg-blue-700 transition-colors disabled:opacity-60"
+                            className="w-full rounded-lg bg-blue-600 px-4 py-2.5 font-semibold text-white shadow-sm transition-colors hover:bg-blue-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 disabled:opacity-60"
                         >
-                            {loading ? 'Creating...' : 'Create Account'}
+                            {loading ? 'Creatingâ€¦' : 'Create Account'}
                         </button>
                     </form>
                 )}
@@ -159,12 +167,17 @@ const SignUpPage = () => {
                         </div>
 
                         <div>
-                            <label className="block text-xs font-medium text-slate-600 mb-1">Verification Code</label>
+                            <label htmlFor="code" className="block text-xs font-medium text-slate-600 mb-1">Verification Code</label>
                             <input
+                                id="code"
+                                name="code"
                                 type="text"
                                 value={code}
                                 onChange={(e) => setCode(e.target.value)}
-                                className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-lg text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                inputMode="numeric"
+                                autoComplete="one-time-code"
+                                spellCheck={false}
+                                className="w-full rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-slate-900 shadow-sm transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
                                 placeholder="123456"
                                 required
                             />
@@ -179,9 +192,9 @@ const SignUpPage = () => {
                         <button
                             type="submit"
                             disabled={!isLoaded || loading}
-                            className="w-full px-4 py-2.5 bg-blue-600 rounded-lg font-semibold text-white hover:bg-blue-700 transition-colors disabled:opacity-60"
+                            className="w-full rounded-lg bg-blue-600 px-4 py-2.5 font-semibold text-white shadow-sm transition-colors hover:bg-blue-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 disabled:opacity-60"
                         >
-                            {loading ? 'Verifying...' : 'Verify Email'}
+                            {loading ? 'Verifyingâ€¦' : 'Verify Email'}
                         </button>
                     </form>
                 )}
@@ -192,10 +205,10 @@ const SignUpPage = () => {
                         type="button"
                         onClick={handleGoogle}
                         disabled={!isLoaded || loading}
-                        className="w-full flex items-center justify-center gap-3 px-4 py-2.5 bg-white border border-slate-200 rounded-lg font-semibold text-slate-800 hover:bg-slate-100 transition-colors disabled:opacity-60"
+                        className="flex w-full items-center justify-center gap-3 rounded-lg border border-slate-200 bg-white px-4 py-2.5 font-semibold text-slate-800 shadow-sm transition-colors hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 disabled:opacity-60"
                     >
                         {loading ? (
-                            <span className="w-5 h-5 border-2 border-slate-300 border-t-slate-800 rounded-full animate-spin" />
+                            <span className="h-5 w-5 animate-spin rounded-full border-2 border-slate-300 border-t-slate-800" aria-hidden="true" />
                         ) : (
                             <GoogleIcon />
                         )}
@@ -211,8 +224,8 @@ const SignUpPage = () => {
                 </div>
 
                 <div className="mt-6">
-                    <Link to="/" className="text-xs text-slate-500 hover:text-slate-700 inline-flex items-center gap-1">
-                        Back to home <ArrowRight className="w-3 h-3" />
+                    <Link to="/" className="inline-flex items-center gap-1 text-xs font-semibold text-slate-500 transition-colors hover:text-slate-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2">
+                        Back to home <ArrowRight className="h-3 w-3" aria-hidden="true" />
                     </Link>
                 </div>
             </div>

@@ -1,7 +1,7 @@
 import React from 'react';
 import { Link, useLocation, Navigate } from 'react-router-dom';
 import { useUser } from '@clerk/clerk-react';
-import { ArrowRight, Bot, Zap, Shield, Globe } from 'lucide-react';
+import { ArrowRight, Bot, Zap, Globe } from 'lucide-react';
 
 const Landing = () => {
     const { isSignedIn, isLoaded } = useUser();
@@ -22,18 +22,25 @@ const Landing = () => {
             </div>
 
             {/* Navbar */}
-            <nav className="relative z-10 container mx-auto px-6 py-6 flex justify-between items-center">
+            <nav className="relative z-10 container mx-auto flex items-center justify-between px-6 py-6">
                 <div className="flex items-center gap-2">
                     <div className="w-9 h-9 bg-blue-600 rounded-lg flex items-center justify-center shadow-sm">
-                        <Bot className="w-5 h-5 text-white" />
+                        <Bot className="w-5 h-5 text-white" aria-hidden="true" />
                     </div>
                     <span className="text-xl font-bold tracking-tight text-slate-900">Magic Teams</span>
                 </div>
                 <div className="flex items-center gap-4">
-                    <Link to="/sign-in" state={loginState} className="px-4 py-2 text-sm font-medium text-slate-600 hover:text-slate-900 transition-colors">
+                    <Link
+                        to="/sign-in"
+                        state={loginState}
+                        className="px-4 py-2 text-sm font-semibold text-slate-600 transition-colors hover:text-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2"
+                    >
                         Login
                     </Link>
-                    <Link to="/sign-up" className="px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-full hover:bg-blue-700 transition-colors shadow-sm">
+                    <Link
+                        to="/sign-up"
+                        className="px-4 py-2 text-sm font-semibold bg-blue-600 text-white rounded-full shadow-sm transition-colors hover:bg-blue-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2"
+                    >
                         Sign Up
                     </Link>
                 </div>
@@ -57,12 +64,19 @@ const Landing = () => {
                     The command center for your digital workforce.
                 </p>
 
-                <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-                    <Link to="/sign-up" className="group relative px-8 py-4 bg-blue-600 rounded-full font-semibold text-white shadow-sm hover:bg-blue-700 transition-all">
+                <div className="flex flex-col items-center justify-center gap-4 sm:flex-row">
+                    <Link
+                        to="/sign-up"
+                        className="group relative rounded-full bg-blue-600 px-8 py-4 font-semibold text-white shadow-sm transition-colors hover:bg-blue-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2"
+                    >
                         Get Started
-                        <ArrowRight className="inline-block ml-2 w-4 h-4 group-hover:translate-x-1 transition-transform" />
+                        <ArrowRight className="ml-2 inline-block h-4 w-4 transition-transform group-hover:translate-x-1" aria-hidden="true" />
                     </Link>
-                    <Link to="/sign-in" state={loginState} className="px-8 py-4 bg-white border border-slate-200 text-slate-700 rounded-full font-semibold hover:bg-slate-100 transition-all">
+                    <Link
+                        to="/sign-in"
+                        state={loginState}
+                        className="rounded-full bg-white px-8 py-4 font-semibold text-slate-700 shadow-sm ring-1 ring-slate-200 transition-colors hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2"
+                    >
                         Log In
                     </Link>
                 </div>
@@ -70,17 +84,17 @@ const Landing = () => {
                 {/* Feature Grid */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mt-24 text-left">
                     <FeatureCard
-                        icon={<Bot className="w-6 h-6 text-blue-600" />}
+                        icon={<Bot className="w-6 h-6 text-blue-600" aria-hidden="true" />}
                         title="Autonomous Agents"
                         desc="Deploy specialized agents that work 24/7 to execute complex workflows without supervision."
                     />
                     <FeatureCard
-                        icon={<Zap className="w-6 h-6 text-orange-600" />}
+                        icon={<Zap className="w-6 h-6 text-orange-600" aria-hidden="true" />}
                         title="Real-time Control"
                         desc="Monitor execution streams, intervene when needed, and broadcast tasks instantly."
                     />
                     <FeatureCard
-                        icon={<Globe className="w-6 h-6 text-emerald-600" />}
+                        icon={<Globe className="w-6 h-6 text-emerald-600" aria-hidden="true" />}
                         title="Universal Connectivity"
                         desc="Connect to any LLM, local or cloud, through the secure OpenClaw Gateway protocol."
                     />
@@ -91,7 +105,7 @@ const Landing = () => {
 };
 
 const FeatureCard = ({ icon, title, desc }) => (
-    <div className="p-6 rounded-2xl bg-white border border-slate-200 hover:border-slate-300 shadow-sm transition-colors">
+    <div className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200 transition-colors hover:ring-slate-300">
         <div className="w-12 h-12 rounded-lg bg-slate-100 flex items-center justify-center mb-4">
             {icon}
         </div>

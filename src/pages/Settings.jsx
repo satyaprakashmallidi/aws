@@ -2,6 +2,8 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { apiUrl } from '../lib/apiBase';
 import { Save, RefreshCw } from 'lucide-react';
 
+const FOCUS_RING = 'focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2';
+
 const TABS = [
     { id: 'models', label: 'Models' },
     { id: 'channels', label: 'Channels' },
@@ -14,17 +16,22 @@ const Settings = () => {
     const [activeTab, setActiveTab] = useState('models');
 
     return (
-        <div className="bg-white rounded-lg shadow p-6">
-            <h2 className="text-2xl font-bold text-gray-800 mb-6">Settings</h2>
+        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
+            <h2 className="mb-6 text-2xl font-bold text-gray-900">Settings</h2>
 
-            <div className="flex gap-2 mb-6 border-b border-gray-200">
+            <div className="mb-6 flex flex-wrap gap-2 border-b border-gray-200" role="tablist" aria-label="Settings">
                 {TABS.map(tab => (
                     <button
                         key={tab.id}
+                        type="button"
                         onClick={() => setActiveTab(tab.id)}
-                        className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${activeTab === tab.id
+                        id={`tab-${tab.id}`}
+                        role="tab"
+                        aria-selected={activeTab === tab.id}
+                        aria-controls={`panel-${tab.id}`}
+                        className={`-mb-px rounded-t-lg border-b-2 px-4 py-2 text-sm font-semibold transition-colors ${FOCUS_RING} ${activeTab === tab.id
                                 ? 'border-blue-600 text-blue-600'
-                                : 'border-transparent text-gray-500 hover:text-gray-700'
+                                : 'border-transparent text-gray-600 hover:text-gray-900'
                             }`}
                     >
                         {tab.label}
@@ -32,11 +39,13 @@ const Settings = () => {
                 ))}
             </div>
 
-            {activeTab === 'models' && <ModelsTab />}
-            {activeTab === 'channels' && <ChannelsTab />}
-            {activeTab === 'soul' && <SoulTab />}
-            {activeTab === 'workspace' && <WorkspaceFileTab />}
-            {activeTab === 'openclaw' && <OpenClawConfigTab />}
+            <section id={`panel-${activeTab}`} role="tabpanel" aria-labelledby={`tab-${activeTab}`} className="min-w-0">
+                {activeTab === 'models' && <ModelsTab />}
+                {activeTab === 'channels' && <ChannelsTab />}
+                {activeTab === 'soul' && <SoulTab />}
+                {activeTab === 'workspace' && <WorkspaceFileTab />}
+                {activeTab === 'openclaw' && <OpenClawConfigTab />}
+            </section>
         </div>
     );
 };
@@ -331,7 +340,9 @@ const ModelsTab = () => {
                 <select
                     value={providerKey}
                     onChange={(e) => setProviderKey(e.target.value)}
-                    className="border border-gray-300 rounded-lg px-3 py-2 text-sm w-full md:w-1/2"
+                    name="provider"
+                    aria-label="Provider"
+                    className={`w-full rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm md:w-1/2 ${FOCUS_RING}`}
                 >
                     {providerCatalog.map((provider) => (
                         <option key={provider.key} value={provider.key}>
@@ -349,7 +360,7 @@ const ModelsTab = () => {
                             key={method}
                             type="button"
                             onClick={() => setAuthMethod(method)}
-                            className={`px-3 py-1.5 rounded-full text-xs font-semibold border ${authMethod === method ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-gray-200 text-gray-600'}`}
+                            className={`rounded-full border px-3 py-1.5 text-xs font-semibold shadow-sm transition-colors ${FOCUS_RING} ${authMethod === method ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-gray-200 text-gray-700 hover:bg-gray-50'}`}
                         >
                             {getAuthLabel(method)}
                         </button>
@@ -361,21 +372,27 @@ const ModelsTab = () => {
                         type="password"
                         value={token}
                         onChange={(e) => setToken(e.target.value)}
-                        className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                        name="token"
+                        autoComplete="off"
+                        aria-label="Provider token"
+                        className={`rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm ${FOCUS_RING}`}
                         placeholder="Provider token"
                     />
                     <input
                         type="text"
                         value={tokenExpiry}
                         onChange={(e) => setTokenExpiry(e.target.value)}
-                        className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                        name="tokenExpiry"
+                        autoComplete="off"
+                        aria-label="Token expiry"
+                        className={`rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm ${FOCUS_RING}`}
                         placeholder="Expires in (e.g. 365d)"
                     />
                     <button
                         type="button"
                         onClick={handleSaveToken}
                         disabled={saving || !token}
-                        className="px-4 py-2 bg-slate-900 text-white rounded-lg text-sm"
+                        className={`rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50 ${FOCUS_RING}`}
                     >
                         Save Token
                     </button>
@@ -390,27 +407,31 @@ const ModelsTab = () => {
                             type="text"
                             value={customKey}
                             onChange={(e) => setCustomKey(e.target.value)}
-                            className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                            aria-label="Custom provider key"
+                            className={`rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm ${FOCUS_RING}`}
                             placeholder="Provider key (e.g. custom_openai)"
                         />
                         <input
                             type="text"
                             value={customLabel}
                             onChange={(e) => setCustomLabel(e.target.value)}
-                            className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                            aria-label="Custom provider label"
+                            className={`rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm ${FOCUS_RING}`}
                             placeholder="Provider label"
                         />
                         <input
                             type="text"
                             value={customBaseUrl}
                             onChange={(e) => setCustomBaseUrl(e.target.value)}
-                            className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                            aria-label="Custom provider base URL"
+                            className={`rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm ${FOCUS_RING}`}
                             placeholder="Base URL"
                         />
                         <select
                             value={customApi}
                             onChange={(e) => setCustomApi(e.target.value)}
-                            className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                            aria-label="Custom provider API type"
+                            className={`rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm ${FOCUS_RING}`}
                         >
                             <option value="openai">OpenAI-compatible</option>
                             <option value="anthropic">Anthropic-compatible</option>
@@ -420,28 +441,31 @@ const ModelsTab = () => {
                             type="text"
                             value={customAuthHeader}
                             onChange={(e) => setCustomAuthHeader(e.target.value)}
-                            className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                            aria-label="Custom provider auth header"
+                            className={`rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm ${FOCUS_RING}`}
                             placeholder="Auth header (default: Authorization)"
                         />
                         <textarea
                             value={customHeadersJson}
                             onChange={(e) => setCustomHeadersJson(e.target.value)}
                             rows={3}
-                            className="border border-gray-300 rounded-lg px-3 py-2 text-xs font-mono"
+                            aria-label="Additional headers JSON"
+                            className={`rounded-lg border border-gray-300 px-3 py-2 text-xs font-mono shadow-sm ${FOCUS_RING}`}
                             placeholder="Additional headers JSON (optional)"
                         />
                         <textarea
                             value={customModels}
                             onChange={(e) => setCustomModels(e.target.value)}
                             rows={4}
-                            className="border border-gray-300 rounded-lg px-3 py-2 text-xs font-mono md:col-span-2"
+                            aria-label="Custom model IDs"
+                            className={`rounded-lg border border-gray-300 px-3 py-2 text-xs font-mono shadow-sm md:col-span-2 ${FOCUS_RING}`}
                             placeholder="Model IDs, one per line"
                         />
                     </div>
                     <button
                         type="button"
                         onClick={handleSaveCustomProvider}
-                        className="mt-3 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm"
+                        className={`mt-3 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50 ${FOCUS_RING}`}
                         disabled={saving || !customKey || !customBaseUrl}
                     >
                         Save Custom Provider
@@ -455,8 +479,11 @@ const ModelsTab = () => {
                     type="text"
                     value={modelSearch}
                     onChange={(e) => setModelSearch(e.target.value)}
-                    className="border border-gray-300 rounded-lg px-3 py-2 text-sm w-full md:w-1/2 mb-3"
-                    placeholder="Search models..."
+                    name="modelSearch"
+                    autoComplete="off"
+                    aria-label="Search models"
+                    className={`mb-3 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm md:w-1/2 ${FOCUS_RING}`}
+                    placeholder="Search models…"
                 />
                 <div className="flex flex-wrap gap-2 mb-3 max-h-64 overflow-y-auto border border-gray-200 rounded-lg p-3">
                     {filteredModels.length === 0 && (
@@ -467,7 +494,7 @@ const ModelsTab = () => {
                             key={modelKey}
                             type="button"
                             onClick={() => toggleModel(modelKey)}
-                            className={`px-3 py-1.5 rounded-full text-xs font-semibold border ${enabledModels.includes(modelKey) ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-gray-200 text-gray-600'}`}
+                            className={`rounded-full border px-3 py-1.5 text-xs font-semibold shadow-sm transition-colors ${FOCUS_RING} ${enabledModels.includes(modelKey) ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-gray-200 text-gray-700 hover:bg-gray-50'}`}
                         >
                             {modelKey}
                         </button>
@@ -478,13 +505,16 @@ const ModelsTab = () => {
                         type="text"
                         value={manualModel}
                         onChange={(e) => setManualModel(e.target.value)}
-                        className="border border-gray-300 rounded-lg px-3 py-2 text-sm flex-1"
+                        name="manualModel"
+                        autoComplete="off"
+                        aria-label="Add model ID"
+                        className={`flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm ${FOCUS_RING}`}
                         placeholder="Add model ID (e.g. gpt-4.1)"
                     />
                     <button
                         type="button"
                         onClick={addManualModel}
-                        className="px-4 py-2 bg-gray-100 rounded-lg text-sm"
+                        className={`rounded-lg bg-gray-100 px-4 py-2 text-sm font-semibold text-gray-900 transition-colors hover:bg-gray-200 ${FOCUS_RING}`}
                     >
                         Add
                     </button>
@@ -498,7 +528,9 @@ const ModelsTab = () => {
                     <select
                         value={primaryModel}
                         onChange={(e) => setPrimaryModel(e.target.value)}
-                        className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                        name="primaryModel"
+                        aria-label="Primary model"
+                        className={`rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm ${FOCUS_RING}`}
                     >
                         <option value="">Select primary model</option>
                         {enabledModels.map((modelKey) => (
@@ -512,7 +544,9 @@ const ModelsTab = () => {
                             const values = Array.from(e.target.selectedOptions).map(o => o.value);
                             setFallbacks(values);
                         }}
-                        className="border border-gray-300 rounded-lg px-3 py-2 text-sm h-28"
+                        name="fallbackModels"
+                        aria-label="Fallback models"
+                        className={`h-28 rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm ${FOCUS_RING}`}
                     >
                         {enabledModels.filter(m => m !== primaryModel).map((modelKey) => (
                             <option key={modelKey} value={modelKey}>{modelKey}</option>
@@ -530,10 +564,10 @@ const ModelsTab = () => {
                     type="button"
                     onClick={handleSaveConfig}
                     disabled={saving || !primaryModel}
-                    className="px-4 py-2 bg-blue-600 text-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                    className={`flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 font-semibold text-white shadow-sm transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50 ${FOCUS_RING}`}
                 >
-                    <Save className="w-4 h-4" />
-                    {saving ? 'Saving...' : 'Save Configuration'}
+                    <Save className="w-4 h-4" aria-hidden="true" />
+                    {saving ? 'Saving…' : 'Save Configuration'}
                 </button>
             </div>
         </div>
@@ -597,10 +631,12 @@ const SoulTab = () => {
             <div className="flex items-center justify-between mb-2">
                 <h3 className="text-lg font-semibold text-gray-800">SOUL.md</h3>
                 <button
+                    type="button"
                     onClick={loadSoul}
-                    className="flex items-center gap-2 text-sm text-gray-600 hover:text-gray-800"
+                    className={`flex items-center gap-2 rounded-lg px-2 py-1 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-100 hover:text-gray-900 ${FOCUS_RING}`}
+                    aria-label="Refresh SOUL.md"
                 >
-                    <RefreshCw className="w-4 h-4" />
+                    <RefreshCw className="w-4 h-4" aria-hidden="true" />
                     Refresh
                 </button>
             </div>
@@ -608,13 +644,15 @@ const SoulTab = () => {
                 <div className="text-xs text-gray-500 mb-2">Path: <span className="font-mono">{path}</span></div>
             )}
             {loading ? (
-                <div className="text-gray-500 text-sm">Loading SOUL.md...</div>
+                <div className="text-gray-500 text-sm">Loading SOUL.md…</div>
             ) : (
                 <textarea
                     value={content}
                     onChange={(e) => setContent(e.target.value)}
                     rows={14}
-                    className="w-full border border-gray-300 rounded-lg p-3 font-mono text-sm"
+                    name="soul"
+                    aria-label="SOUL.md"
+                    className={`w-full rounded-lg border border-gray-300 p-3 font-mono text-sm shadow-sm ${FOCUS_RING}`}
                 />
             )}
 
@@ -623,12 +661,13 @@ const SoulTab = () => {
 
             <div className="mt-4">
                 <button
+                    type="button"
                     onClick={handleSave}
                     disabled={saving}
-                    className="px-4 py-2 bg-blue-600 text-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                    className={`flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 font-semibold text-white shadow-sm transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50 ${FOCUS_RING}`}
                 >
-                    <Save className="w-4 h-4" />
-                    {saving ? 'Saving...' : 'Save'}
+                    <Save className="w-4 h-4" aria-hidden="true" />
+                    {saving ? 'Saving…' : 'Save'}
                 </button>
             </div>
         </div>
@@ -719,11 +758,12 @@ const WorkspaceFileTab = () => {
             <div className="flex items-center justify-between mb-3">
                 <h3 className="text-lg font-semibold text-gray-800">Workspace File</h3>
                 <button
+                    type="button"
                     onClick={loadFile}
-                    className="flex items-center gap-2 text-sm text-gray-600 hover:text-gray-800"
+                    className={`flex items-center gap-2 rounded-lg px-2 py-1 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-100 hover:text-gray-900 disabled:opacity-50 ${FOCUS_RING}`}
                     disabled={!fileName}
                 >
-                    <RefreshCw className="w-4 h-4" />
+                    <RefreshCw className="w-4 h-4" aria-hidden="true" />
                     Load
                 </button>
             </div>
@@ -736,9 +776,11 @@ const WorkspaceFileTab = () => {
                         setFileName(next);
                         if (next) loadFile(next);
                     }}
-                    className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                    name="file"
+                    aria-label="Workspace file"
+                    className={`rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm ${FOCUS_RING}`}
                 >
-                    <option value="">Select a file...</option>
+                    <option value="">Select a file…</option>
                     {files.map((f) => (
                         <option key={f} value={f}>{f}</option>
                     ))}
@@ -747,7 +789,10 @@ const WorkspaceFileTab = () => {
                     type="text"
                     value={fileName}
                     onChange={(e) => setFileName(e.target.value)}
-                    className="border border-gray-300 rounded-lg px-3 py-2 text-sm md:col-span-2"
+                    name="fileName"
+                    autoComplete="off"
+                    aria-label="Workspace file path"
+                    className={`rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm md:col-span-2 ${FOCUS_RING}`}
                     placeholder="or type a path (e.g. README.md or notes/todo.md)"
                 />
             </div>
@@ -757,13 +802,15 @@ const WorkspaceFileTab = () => {
             )}
 
             {loading ? (
-                <div className="text-gray-500 text-sm">Loading file...</div>
+                <div className="text-gray-500 text-sm">Loading file…</div>
             ) : (
                 <textarea
                     value={content}
                     onChange={(e) => setContent(e.target.value)}
                     rows={14}
-                    className="w-full border border-gray-300 rounded-lg p-3 font-mono text-sm"
+                    name="workspaceFile"
+                    aria-label="Workspace file content"
+                    className={`w-full rounded-lg border border-gray-300 p-3 font-mono text-sm shadow-sm ${FOCUS_RING}`}
                 />
             )}
 
@@ -772,12 +819,13 @@ const WorkspaceFileTab = () => {
 
             <div className="mt-4">
                 <button
+                    type="button"
                     onClick={handleSave}
                     disabled={saving || !fileName}
-                    className="px-4 py-2 bg-blue-600 text-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                    className={`flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 font-semibold text-white shadow-sm transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50 ${FOCUS_RING}`}
                 >
-                    <Save className="w-4 h-4" />
-                    {saving ? 'Saving...' : 'Save'}
+                    <Save className="w-4 h-4" aria-hidden="true" />
+                    {saving ? 'Saving…' : 'Save'}
                 </button>
             </div>
         </div>
@@ -843,10 +891,12 @@ const OpenClawConfigTab = () => {
             <div className="flex items-center justify-between mb-2">
                 <h3 className="text-lg font-semibold text-gray-800">openclaw.json</h3>
                 <button
+                    type="button"
                     onClick={loadConfig}
-                    className="flex items-center gap-2 text-sm text-gray-600 hover:text-gray-800"
+                    className={`flex items-center gap-2 rounded-lg px-2 py-1 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-100 hover:text-gray-900 ${FOCUS_RING}`}
+                    aria-label="Refresh openclaw.json"
                 >
-                    <RefreshCw className="w-4 h-4" />
+                    <RefreshCw className="w-4 h-4" aria-hidden="true" />
                     Refresh
                 </button>
             </div>
@@ -854,13 +904,15 @@ const OpenClawConfigTab = () => {
                 <div className="text-xs text-gray-500 mb-2">Path: <span className="font-mono">{path}</span></div>
             )}
             {loading ? (
-                <div className="text-gray-500 text-sm">Loading config...</div>
+                <div className="text-gray-500 text-sm">Loading config…</div>
             ) : (
                 <textarea
                     value={content}
                     onChange={(e) => setContent(e.target.value)}
                     rows={16}
-                    className="w-full border border-gray-300 rounded-lg p-3 font-mono text-sm"
+                    name="openclawConfig"
+                    aria-label="openclaw.json"
+                    className={`w-full rounded-lg border border-gray-300 p-3 font-mono text-sm shadow-sm ${FOCUS_RING}`}
                 />
             )}
 
@@ -869,12 +921,13 @@ const OpenClawConfigTab = () => {
 
             <div className="mt-4">
                 <button
+                    type="button"
                     onClick={handleSave}
                     disabled={saving}
-                    className="px-4 py-2 bg-blue-600 text-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                    className={`flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 font-semibold text-white shadow-sm transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50 ${FOCUS_RING}`}
                 >
-                    <Save className="w-4 h-4" />
-                    {saving ? 'Saving...' : 'Save'}
+                    <Save className="w-4 h-4" aria-hidden="true" />
+                    {saving ? 'Saving…' : 'Save'}
                 </button>
             </div>
         </div>
@@ -1189,7 +1242,7 @@ const ChannelsTab = () => {
         const state = rawState || 'not set up';
         const { ok: connected, configured } = classifyState(state);
         return (
-            <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+            <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
                 <div className="flex items-center justify-between mb-2">
                     <div className="flex items-center gap-2">
                         <h4 className="font-semibold text-gray-800">{title}</h4>
@@ -1204,13 +1257,16 @@ const ChannelsTab = () => {
     const Overlay = ({ title }) => {
         if (!title) return null;
         return (
-            <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
-                <div className="bg-white rounded-lg shadow-xl border border-gray-200 w-full max-w-md p-5">
+            <div className="fixed inset-0 z-50 overscroll-contain">
+                <div className="absolute inset-0 bg-black/40" aria-hidden="true" />
+                <div className="relative flex min-h-full items-center justify-center p-4">
+                    <div role="dialog" aria-modal="true" aria-label={title} className="w-full max-w-md rounded-xl border border-gray-200 bg-white p-5 shadow-xl">
                     <div className="flex items-center gap-3">
-                        <div className="w-5 h-5 border-2 border-gray-300 border-t-gray-900 rounded-full animate-spin" />
+                        <div className="w-5 h-5 border-2 border-gray-300 border-t-gray-900 rounded-full animate-spin motion-reduce:animate-none" aria-hidden="true" />
                         <div className="text-sm font-semibold text-gray-900">{title}</div>
                     </div>
                     <div className="mt-2 text-xs text-gray-600">Please wait… (this can take ~1–2 minutes)</div>
+                    </div>
                 </div>
             </div>
         );
@@ -1219,11 +1275,18 @@ const ChannelsTab = () => {
     const WhatsAppModal = () => {
         if (!whatsappModalOpen) return null;
         return (
-            <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
-                <div className="bg-white rounded-lg shadow-xl border border-gray-200 w-full max-w-3xl p-5">
+            <div className="fixed inset-0 z-50 overscroll-contain">
+                <button
+                    type="button"
+                    aria-label="Close dialog"
+                    className="absolute inset-0 bg-black/40"
+                    onClick={() => !whatsappPairing && setWhatsappModalOpen(false)}
+                />
+                <div className="relative flex min-h-full items-center justify-center p-4">
+                    <div role="dialog" aria-modal="true" aria-labelledby="whatsapp-title" className="w-full max-w-3xl rounded-xl border border-gray-200 bg-white p-5 shadow-xl">
                     <div className="flex items-start justify-between gap-4">
                         <div>
-                            <div className="text-base font-semibold text-gray-900">WhatsApp pairing</div>
+                            <div id="whatsapp-title" className="text-base font-semibold text-gray-900">WhatsApp pairing</div>
                             <div className="text-xs text-gray-600 mt-1">
                                 Open WhatsApp on your phone → Linked devices → Link a device → scan this QR.
                             </div>
@@ -1232,7 +1295,7 @@ const ChannelsTab = () => {
                             type="button"
                             onClick={() => setWhatsappModalOpen(false)}
                             disabled={whatsappPairing}
-                            className="text-sm px-3 py-1.5 rounded border border-gray-300 disabled:opacity-50"
+                            className={`rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm font-semibold text-gray-900 shadow-sm transition-colors hover:bg-gray-50 disabled:opacity-50 ${FOCUS_RING}`}
                         >
                             {whatsappPairing ? 'Pairing…' : 'Close'}
                         </button>
@@ -1244,7 +1307,7 @@ const ChannelsTab = () => {
                                 <img src={whatsappQr} alt="WhatsApp QR" className="w-72 h-72" />
                             ) : (
                                 <div className="flex items-center gap-3 text-sm text-gray-700">
-                                    <div className="w-5 h-5 border-2 border-gray-300 border-t-gray-900 rounded-full animate-spin" />
+                                    <div className="w-5 h-5 border-2 border-gray-300 border-t-gray-900 rounded-full animate-spin motion-reduce:animate-none" aria-hidden="true" />
                                     Generating QR…
                                 </div>
                             )}
@@ -1253,9 +1316,11 @@ const ChannelsTab = () => {
                             value={loginOutput}
                             readOnly
                             rows={14}
-                            className="w-full border border-gray-300 rounded-lg p-3 font-mono text-xs bg-white"
+                            aria-label="Pairing output"
+                            className={`w-full rounded-lg border border-gray-300 bg-white p-3 font-mono text-xs shadow-sm ${FOCUS_RING}`}
                             placeholder="Pairing output will appear here…"
                         />
+                    </div>
                     </div>
                 </div>
             </div>
@@ -1279,9 +1344,9 @@ const ChannelsTab = () => {
                         type="button"
                         onClick={loadAll}
                         disabled={loading || isBusy || whatsappPairing}
-                        className="px-3 py-2 bg-gray-100 rounded-lg text-sm flex items-center gap-2"
+                        className={`flex items-center gap-2 rounded-lg bg-gray-100 px-3 py-2 text-sm font-semibold text-gray-900 transition-colors hover:bg-gray-200 disabled:cursor-not-allowed disabled:opacity-50 ${FOCUS_RING}`}
                     >
-                        <RefreshCw className="w-4 h-4" />
+                        <RefreshCw className="w-4 h-4" aria-hidden="true" />
                         Refresh
                     </button>
                 </div>
@@ -1311,7 +1376,7 @@ const ChannelsTab = () => {
                                     type="button"
                                     onClick={() => setEditMode(prev => ({ ...prev, telegram: true }))}
                                     disabled={loading || isBusy || whatsappPairing}
-                                    className="text-xs px-3 py-2 rounded border border-gray-300 bg-white disabled:opacity-50"
+                                    className={`rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs font-semibold text-gray-900 shadow-sm transition-colors hover:bg-gray-50 disabled:opacity-50 ${FOCUS_RING}`}
                                 >
                                     Update token
                                 </button>
@@ -1323,14 +1388,15 @@ const ChannelsTab = () => {
                                     value={telegramToken}
                                     onChange={(e) => setTelegramToken(e.target.value)}
                                     disabled={loading || isBusy || whatsappPairing}
-                                    className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                                    aria-label="Telegram bot token"
+                                    className={`rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm ${FOCUS_RING}`}
                                     placeholder="Bot token"
                                 />
                                 <button
                                     type="button"
                                     onClick={() => addChannel({ channel: 'telegram', token: telegramToken })}
                                     disabled={loading || isBusy || whatsappPairing || !telegramToken}
-                                    className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm disabled:opacity-50"
+                                    className={`rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50 ${FOCUS_RING}`}
                                 >
                                     Save Telegram
                                 </button>
@@ -1350,7 +1416,7 @@ const ChannelsTab = () => {
                                     type="button"
                                     onClick={() => setEditMode(prev => ({ ...prev, discord: true }))}
                                     disabled={loading || isBusy || whatsappPairing}
-                                    className="text-xs px-3 py-2 rounded border border-gray-300 bg-white disabled:opacity-50"
+                                    className={`rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs font-semibold text-gray-900 shadow-sm transition-colors hover:bg-gray-50 disabled:opacity-50 ${FOCUS_RING}`}
                                 >
                                     Update token
                                 </button>
@@ -1362,14 +1428,15 @@ const ChannelsTab = () => {
                                     value={discordToken}
                                     onChange={(e) => setDiscordToken(e.target.value)}
                                     disabled={loading || isBusy || whatsappPairing}
-                                    className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                                    aria-label="Discord bot token"
+                                    className={`rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm ${FOCUS_RING}`}
                                     placeholder="Bot token"
                                 />
                                 <button
                                     type="button"
                                     onClick={() => addChannel({ channel: 'discord', token: discordToken })}
                                     disabled={loading || isBusy || whatsappPairing || !discordToken}
-                                    className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm disabled:opacity-50"
+                                    className={`rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50 ${FOCUS_RING}`}
                                 >
                                     Save Discord
                                 </button>
@@ -1389,7 +1456,7 @@ const ChannelsTab = () => {
                                     type="button"
                                     onClick={() => setEditMode(prev => ({ ...prev, slack: true }))}
                                     disabled={loading || isBusy || whatsappPairing}
-                                    className="text-xs px-3 py-2 rounded border border-gray-300 bg-white disabled:opacity-50"
+                                    className={`rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs font-semibold text-gray-900 shadow-sm transition-colors hover:bg-gray-50 disabled:opacity-50 ${FOCUS_RING}`}
                                 >
                                     Update tokens
                                 </button>
@@ -1401,7 +1468,8 @@ const ChannelsTab = () => {
                                     value={slackBotToken}
                                     onChange={(e) => setSlackBotToken(e.target.value)}
                                     disabled={loading || isBusy || whatsappPairing}
-                                    className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                                    aria-label="Slack bot token"
+                                    className={`rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm ${FOCUS_RING}`}
                                     placeholder="Bot token (xoxb-...)"
                                 />
                                 <input
@@ -1409,14 +1477,15 @@ const ChannelsTab = () => {
                                     value={slackAppToken}
                                     onChange={(e) => setSlackAppToken(e.target.value)}
                                     disabled={loading || isBusy || whatsappPairing}
-                                    className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                                    aria-label="Slack app token"
+                                    className={`rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm ${FOCUS_RING}`}
                                     placeholder="App token (xapp-...)"
                                 />
                                 <button
                                     type="button"
                                     onClick={() => addChannel({ channel: 'slack', slackBotToken, slackAppToken })}
                                     disabled={loading || isBusy || whatsappPairing || (!slackBotToken && !slackAppToken)}
-                                    className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm disabled:opacity-50"
+                                    className={`rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50 ${FOCUS_RING}`}
                                 >
                                     Save Slack
                                 </button>
@@ -1442,7 +1511,7 @@ const ChannelsTab = () => {
                                 type="button"
                                 onClick={startWhatsAppLogin}
                                 disabled={loading || isBusy || whatsappPairing || (connected || configured)}
-                                className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm disabled:opacity-50"
+                                className={`rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50 ${FOCUS_RING}`}
                             >
                                 {whatsappPairing ? 'Pairing…' : 'Start pairing (QR)'}
                             </button>
@@ -1452,7 +1521,7 @@ const ChannelsTab = () => {
                                     type="button"
                                     onClick={startWhatsAppLogin}
                                     disabled={loading || isBusy || whatsappPairing}
-                                    className="text-xs px-3 py-2 rounded border border-gray-300 bg-white disabled:opacity-50"
+                                    className={`rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs font-semibold text-gray-900 shadow-sm transition-colors hover:bg-gray-50 disabled:opacity-50 ${FOCUS_RING}`}
                                 >
                                     Re-pair WhatsApp
                                 </button>

@@ -3,11 +3,13 @@ import { Link, useLocation } from 'react-router-dom';
 import { UserButton } from "@clerk/clerk-react";
 import { health } from '../lib/api';
 import { apiUrl } from '../lib/apiBase';
+import { Menu, X } from 'lucide-react';
 
 const Header = () => {
     const location = useLocation();
     const [gatewayStatus, setGatewayStatus] = useState('offline');
     const [activeAgentCount, setActiveAgentCount] = useState(0);
+    const [mobileOpen, setMobileOpen] = useState(false);
 
     useEffect(() => {
         fetchStatus();
@@ -33,76 +35,64 @@ const Header = () => {
 
     const isActive = (path) => location.pathname === path;
 
-    const handleSignOut = () => {
-        // TODO: Implement sign out logic
-        window.location.href = '/login';
-    };
+    const links = [
+        { to: '/app', label: 'Home' },
+        { to: '/app/chat', label: 'Chat' },
+        { to: '/app/broadcast', label: 'Broadcast' },
+        { to: '/app/settings', label: 'Settings' }
+    ];
 
     return (
-        <header className="bg-gray-900 text-white shadow-lg">
-            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-                <div className="flex items-center justify-between h-16">
-                    {/* Left: Logo + Status */}
-                    <div className="flex items-center gap-6">
-                        <h1 className="text-xl font-bold">OpenClaw Control</h1>
+        <header className="bg-slate-950 text-white shadow">
+            <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+                <div className="flex h-16 items-center justify-between gap-3">
+                    <div className="flex min-w-0 items-center gap-4">
+                        <h1 className="min-w-0 text-base font-semibold tracking-tight sm:text-lg">
+                            OpenClaw Control
+                        </h1>
 
-                        <div className="flex items-center gap-2 px-3 py-1 bg-gray-800 rounded-lg">
-                            <div className={`w-2 h-2 rounded-full ${gatewayStatus === 'online' ? 'bg-green-500' : 'bg-red-500'
-                                }`}></div>
-                            <span className="text-sm font-medium">
+                        <div className="hidden items-center gap-2 rounded-lg bg-white/5 px-3 py-1 sm:flex" aria-live="polite">
+                            <div
+                                className={`h-2 w-2 rounded-full ${gatewayStatus === 'online' ? 'bg-emerald-400' : 'bg-rose-400'}`}
+                                aria-hidden="true"
+                            />
+                            <span className="text-sm font-medium text-white/90">
                                 {gatewayStatus === 'online' ? 'Connected' : 'Offline'}
                             </span>
                         </div>
 
-                        <div className="px-3 py-1 bg-blue-600 rounded-lg">
-                            <span className="text-sm font-medium">
+                        <div className="hidden rounded-lg bg-blue-600/90 px-3 py-1 sm:block">
+                            <span className="text-sm font-semibold tabular-nums">
                                 {activeAgentCount} Active Agent{activeAgentCount !== 1 ? 's' : ''}
                             </span>
                         </div>
                     </div>
 
-                    {/* Center: Navigation */}
-                    <nav className="flex gap-4">
-                        <Link
-                            to="/app"
-                            className={`px-4 py-2 rounded-lg font-medium transition-colors ${isActive('/app')
-                                ? 'bg-blue-600 text-white'
-                                : 'text-gray-300 hover:bg-gray-800'
-                                }`}
-                        >
-                            Home
-                        </Link>
-                        <Link
-                            to="/app/chat"
-                            className={`px-4 py-2 rounded-lg font-medium transition-colors ${isActive('/app/chat')
-                                ? 'bg-blue-600 text-white'
-                                : 'text-gray-300 hover:bg-gray-800'
-                                }`}
-                        >
-                            Chat
-                        </Link>
-                        <Link
-                            to="/app/broadcast"
-                            className={`px-4 py-2 rounded-lg font-medium transition-colors ${isActive('/app/broadcast')
-                                ? 'bg-blue-600 text-white'
-                                : 'text-gray-300 hover:bg-gray-800'
-                                }`}
-                        >
-                            Broadcast
-                        </Link>
-                        <Link
-                            to="/app/settings"
-                            className={`px-4 py-2 rounded-lg font-medium transition-colors ${isActive('/app/settings')
-                                ? 'bg-blue-600 text-white'
-                                : 'text-gray-300 hover:bg-gray-800'
-                                }`}
-                        >
-                            Settings
-                        </Link>
+                    <nav className="hidden items-center gap-1 sm:flex" aria-label="Primary">
+                        {links.map((l) => (
+                            <Link
+                                key={l.to}
+                                to={l.to}
+                                className={`rounded-lg px-3 py-2 text-sm font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950 ${isActive(l.to)
+                                    ? 'bg-blue-600 text-white'
+                                    : 'text-white/80 hover:bg-white/10 hover:text-white'
+                                    }`}
+                            >
+                                {l.label}
+                            </Link>
+                        ))}
                     </nav>
 
-                    {/* Right: User Profile */}
-                    <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-2">
+                        <button
+                            type="button"
+                            className="inline-flex items-center justify-center rounded-lg p-2 text-white/90 hover:bg-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950 sm:hidden"
+                            aria-label={mobileOpen ? 'Close navigation' : 'Open navigation'}
+                            onClick={() => setMobileOpen((v) => !v)}
+                        >
+                            {mobileOpen ? <X className="h-5 w-5" aria-hidden="true" /> : <Menu className="h-5 w-5" aria-hidden="true" />}
+                        </button>
+
                         <UserButton
                             afterSignOutUrl="/"
                             appearance={{
@@ -117,6 +107,41 @@ const Header = () => {
                         />
                     </div>
                 </div>
+
+                {mobileOpen && (
+                    <div className="border-t border-white/10 py-3 sm:hidden">
+                        <div className="mb-3 flex items-center justify-between gap-3 rounded-lg bg-white/5 px-3 py-2" aria-live="polite">
+                            <div className="flex items-center gap-2">
+                                <div
+                                    className={`h-2 w-2 rounded-full ${gatewayStatus === 'online' ? 'bg-emerald-400' : 'bg-rose-400'}`}
+                                    aria-hidden="true"
+                                />
+                                <span className="text-sm font-semibold text-white/90">
+                                    {gatewayStatus === 'online' ? 'Connected' : 'Offline'}
+                                </span>
+                            </div>
+                            <span className="text-sm font-semibold tabular-nums text-white/90">
+                                {activeAgentCount}
+                            </span>
+                        </div>
+
+                        <nav className="grid gap-1" aria-label="Primary">
+                            {links.map((l) => (
+                                <Link
+                                    key={l.to}
+                                    to={l.to}
+                                    onClick={() => setMobileOpen(false)}
+                                    className={`rounded-lg px-3 py-2 text-sm font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950 ${isActive(l.to)
+                                        ? 'bg-blue-600 text-white'
+                                        : 'text-white/80 hover:bg-white/10 hover:text-white'
+                                        }`}
+                                >
+                                    {l.label}
+                                </Link>
+                            ))}
+                        </nav>
+                    </div>
+                )}
             </div>
         </header>
     );

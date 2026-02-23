@@ -4,6 +4,8 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Bot, RefreshCw, Send, User, Loader2 } from 'lucide-react';
 
+const FOCUS_RING = 'focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2';
+
 const Broadcast = () => {
     const [agents, setAgents] = useState([]);
     const [selectedAgents, setSelectedAgents] = useState([]);
@@ -204,11 +206,11 @@ const Broadcast = () => {
     }, [feedMessages.length, sending]);
 
     return (
-        <div className="grid grid-cols-12 gap-6 h-[calc(100vh-8rem)]">
+        <div className="flex min-h-[calc(100dvh-10rem)] flex-col gap-6 lg:grid lg:grid-cols-12">
             {/* Left: Task Composition */}
-            <div className="col-span-4 bg-white rounded-lg shadow p-6 flex flex-col">
+            <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm lg:col-span-4 flex flex-col">
                 <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center gap-2">
-                    <Send className="w-5 h-5 text-blue-600" />
+                    <Send className="w-5 h-5 text-blue-600" aria-hidden="true" />
                     New Broadcast
                 </h2>
 
@@ -251,30 +253,32 @@ const Broadcast = () => {
                     </div>
 
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                        <label htmlFor="broadcast-message" className="block text-sm font-medium text-gray-700 mb-2">
                             Task Instructions
                         </label>
                         <textarea
+                            id="broadcast-message"
+                            name="message"
                             value={message}
                             onChange={(e) => setMessage(e.target.value)}
-                            className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 h-32 resize-none"
-                            placeholder="Describe the task for the selected agents..."
+                            className={`h-32 w-full resize-none rounded-lg border border-gray-300 px-4 py-3 shadow-sm transition-colors ${FOCUS_RING}`}
+                            placeholder="Describe the task for the selected agents…"
                         />
                     </div>
 
                     <button
                         type="submit"
                         disabled={sending || selectedAgents.length === 0 || !message.trim()}
-                        className="w-full bg-blue-600 text-white py-3 rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 transition-colors shadow-sm"
+                        className={`flex w-full items-center justify-center gap-2 rounded-lg bg-blue-600 py-3 font-semibold text-white shadow-sm transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50 ${FOCUS_RING}`}
                     >
                         {sending ? (
                             <>
-                                <Loader2 className="w-5 h-5 animate-spin" />
-                                Broadcasting...
+                                <Loader2 className="w-5 h-5 animate-spin motion-reduce:animate-none" aria-hidden="true" />
+                                Broadcasting…
                             </>
                         ) : (
                             <>
-                                <Send className="w-5 h-5" />
+                                <Send className="w-5 h-5" aria-hidden="true" />
                                 Send Task
                             </>
                         )}
@@ -283,7 +287,7 @@ const Broadcast = () => {
             </div>
 
             {/* Right: Chat Feed (no separate status cards) */}
-            <div className="col-span-8 bg-white rounded-lg shadow flex flex-col overflow-hidden">
+            <div className="min-w-0 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm lg:col-span-8 flex flex-col">
                 <div className="p-4 border-b border-gray-100 flex items-center justify-between">
                     <div>
                         <div className="text-lg font-bold text-gray-800">Broadcast feed</div>
@@ -299,10 +303,10 @@ const Broadcast = () => {
                             else fetchRecent();
                         }}
                         disabled={feedLoading}
-                        className="text-sm px-3 py-2 rounded border border-gray-200 bg-gray-50 flex items-center gap-2 disabled:opacity-50"
-                        title="Refresh"
+                        className={`flex items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-semibold text-gray-900 shadow-sm transition-colors hover:bg-white disabled:opacity-50 ${FOCUS_RING}`}
+                        aria-label="Refresh feed"
                     >
-                        <RefreshCw className="w-4 h-4" />
+                        <RefreshCw className="w-4 h-4" aria-hidden="true" />
                         Refresh
                     </button>
                 </div>
@@ -310,14 +314,14 @@ const Broadcast = () => {
                 <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-50/50">
                     {feedLoading && (
                         <div className="flex items-center gap-2 text-sm text-gray-500">
-                            <Loader2 className="w-4 h-4 animate-spin" />
+                            <Loader2 className="w-4 h-4 animate-spin motion-reduce:animate-none" aria-hidden="true" />
                             Loading…
                         </div>
                     )}
 
                     {feedMessages.length === 0 && !sending && !feedLoading && (
                         <div className="flex flex-col items-center justify-center h-full text-gray-400">
-                            <Bot className="w-16 h-16 mb-4 opacity-20" />
+                            <Bot className="w-16 h-16 mb-4 opacity-20" aria-hidden="true" />
                             <p>No activity yet. Send a broadcast to start.</p>
                         </div>
                     )}
@@ -330,12 +334,12 @@ const Broadcast = () => {
                         const avatar = isUser
                             ? (
                                 <div className="w-8 h-8 rounded-full bg-gray-200 flex items-center justify-center text-gray-600 flex-shrink-0 mt-1">
-                                    <User className="w-5 h-5" />
+                                    <User className="w-5 h-5" aria-hidden="true" />
                                 </div>
                             )
                             : (
                                 <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 mt-1 ${isSystem ? 'bg-gray-200 text-gray-700' : 'bg-blue-100 text-blue-600'}`}>
-                                    <Bot className="w-5 h-5" />
+                                    <Bot className="w-5 h-5" aria-hidden="true" />
                                 </div>
                             );
 
@@ -392,12 +396,12 @@ const Broadcast = () => {
                     {sending && (
                         <div className="flex justify-start gap-3">
                             <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 flex-shrink-0 mt-1">
-                                <Bot className="w-5 h-5" />
+                                <Bot className="w-5 h-5" aria-hidden="true" />
                             </div>
                             <div className="bg-white p-3 rounded-lg rounded-tl-none border border-gray-100 shadow-sm flex items-center gap-1">
-                                <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></span>
-                                <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce delay-75"></span>
-                                <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce delay-150"></span>
+                                <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce motion-reduce:animate-none"></span>
+                                <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce delay-75 motion-reduce:animate-none"></span>
+                                <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce delay-150 motion-reduce:animate-none"></span>
                             </div>
                         </div>
                     )}
