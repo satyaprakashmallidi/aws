@@ -2,6 +2,7 @@ import express from 'express';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
+import * as readline from 'node:readline';
 import cors from 'cors';
 import { execFile, spawn } from 'child_process';
 import crypto from 'crypto';
@@ -866,6 +867,156 @@ function recordHeartbeat(ts = new Date().toISOString()) {
         // ignore
     }
     return ts;
+}
+
+let usageCache = { key: '', expiresAtMs: 0, data: null };
+
+function pickUsageFields(usage) {
+    const u = usage && typeof usage === 'object' ? usage : {};
+    const num = (v) => {
+        const n = Number(v);
+        return Number.isFinite(n) ? n : 0;
+    };
+
+    const input = num(u.input ?? u.promptTokens ?? u.inputTokens);
+    const output = num(u.output ?? u.completionTokens ?? u.outputTokens);
+    const cacheRead = num(u.cacheRead ?? u.cache_read);
+    const cacheWrite = num(u.cacheWrite ?? u.cache_write);
+    const totalTokens = num(u.totalTokens ?? u.total ?? (input + output + cacheRead + cacheWrite));
+
+    const costObj = u.cost && typeof u.cost === 'object' ? u.cost : {};
+    const costTotal = num(costObj.total ?? u.costTotal ?? u.totalCost);
+    return { input, output, cacheRead, cacheWrite, totalTokens, costTotal };
+}
+
+async function scanJsonlForUsage(filePath, sinceMs, out) {
+    const stream = fs.createReadStream(filePath, { encoding: 'utf8' });
+    const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
+    try {
+        for await (const line of rl) {
+            const s = String(line || '').trim();
+            if (!s) continue;
+            const evt = parseJsonLoose(s);
+            if (!evt || typeof evt !== 'object') continue;
+            const ts = evt?.timestamp || evt?.message?.timestamp || evt?.data?.timestamp;
+            const tms = coerceTimeMs(ts);
+            if (!tms || tms < sinceMs) continue;
+
+            const msg = evt?.message;
+            const usage = msg?.usage;
+            if (!usage) continue;
+
+            const { input, output, cacheRead, cacheWrite, totalTokens, costTotal } = pickUsageFields(usage);
+            if (!totalTokens && !costTotal) continue;
+
+            const provider = String(msg?.provider || msg?.api || evt?.provider || 'unknown');
+            const model = String(msg?.model || evt?.modelId || 'unknown');
+            const key = `${provider}/${model}`;
+
+            out.totals.input += input;
+            out.totals.output += output;
+            out.totals.cacheRead += cacheRead;
+            out.totals.cacheWrite += cacheWrite;
+            out.totals.totalTokens += totalTokens;
+            out.totals.costTotal += costTotal;
+            out.totals.messages += 1;
+
+            const bucket = out.byModel[key] || { provider, model, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, costTotal: 0, messages: 0 };
+            bucket.input += input;
+            bucket.output += output;
+            bucket.cacheRead += cacheRead;
+            bucket.cacheWrite += cacheWrite;
+            bucket.totalTokens += totalTokens;
+            bucket.costTotal += costTotal;
+            bucket.messages += 1;
+            out.byModel[key] = bucket;
+        }
+    } finally {
+        try { rl.close(); } catch { /* ignore */ }
+        try { stream.destroy(); } catch { /* ignore */ }
+    }
+}
+
+async function computeUsageSummary({ hours = 24 } = {}) {
+    const nowMs = Date.now();
+    const windowHours = Math.max(1, Math.min(24 * 14, Number(hours) || 24));
+    const sinceMs = nowMs - windowHours * 60 * 60 * 1000;
+
+    const key = `${windowHours}`;
+    if (usageCache.data && usageCache.key === key && usageCache.expiresAtMs > nowMs) return usageCache.data;
+
+    const out = {
+        windowHours,
+        since: new Date(sinceMs).toISOString(),
+        until: new Date(nowMs).toISOString(),
+        totals: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, costTotal: 0, messages: 0 },
+        byModel: {}
+    };
+
+    const candidates = [];
+
+    // Agent session JSONL
+    const agentsDir = path.join(OPENCLAW_DIR, 'agents');
+    try {
+        if (fs.existsSync(agentsDir)) {
+            const agents = fs.readdirSync(agentsDir, { withFileTypes: true }).filter(d => d.isDirectory()).map(d => d.name);
+            for (const agentId of agents) {
+                const sessionsDir = path.join(agentsDir, agentId, 'sessions');
+                if (!fs.existsSync(sessionsDir)) continue;
+                const items = fs.readdirSync(sessionsDir, { withFileTypes: true });
+                for (const item of items) {
+                    if (!item.isFile()) continue;
+                    if (!item.name.endsWith('.jsonl')) continue;
+                    const fp = path.join(sessionsDir, item.name);
+                    try {
+                        const stat = fs.statSync(fp);
+                        if (stat.mtimeMs >= sinceMs) candidates.push(fp);
+                    } catch {
+                        // ignore
+                    }
+                }
+            }
+        }
+    } catch {
+        // ignore
+    }
+
+    // Cron run JSONL
+    const cronRunsDir = path.join(OPENCLAW_DIR, 'cron', 'runs');
+    try {
+        if (fs.existsSync(cronRunsDir)) {
+            const items = fs.readdirSync(cronRunsDir, { withFileTypes: true });
+            for (const item of items) {
+                if (!item.isFile()) continue;
+                if (!item.name.endsWith('.jsonl')) continue;
+                const fp = path.join(cronRunsDir, item.name);
+                try {
+                    const stat = fs.statSync(fp);
+                    if (stat.mtimeMs >= sinceMs) candidates.push(fp);
+                } catch {
+                    // ignore
+                }
+            }
+        }
+    } catch {
+        // ignore
+    }
+
+    for (const fp of candidates) {
+        try {
+            await scanJsonlForUsage(fp, sinceMs, out);
+        } catch {
+            // ignore
+        }
+    }
+
+    const byModel = Object.values(out.byModel)
+        .sort((a, b) => (b.costTotal - a.costTotal) || (b.totalTokens - a.totalTokens))
+        .slice(0, 200);
+
+    const result = { ...out, byModel };
+    usageCache = { key, expiresAtMs: nowMs + 30_000, data: result };
+    return result;
 }
 
 const CRON_JOBS_PATH = path.join(OPENCLAW_DIR, 'cron', 'jobs.json');
@@ -2741,6 +2892,16 @@ app.post('/api/tasks/:id/complete', async (req, res) => {
 
 app.get('/api/heartbeat', (req, res) => {
     return res.json({ ts: lastHeartbeat });
+});
+
+app.get('/api/usage', async (req, res) => {
+    try {
+        const hours = req.query?.hours ? Number(req.query.hours) : 24;
+        const summary = await computeUsageSummary({ hours });
+        return res.json(summary);
+    } catch (error) {
+        return res.status(500).json({ error: error.message });
+    }
 });
 
 app.post('/api/heartbeat', (req, res) => {
