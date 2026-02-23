@@ -681,6 +681,11 @@ async function runOpenClawJson(args, options) {
     }
 }
 
+function isLikelyGatewayTimeout(err) {
+    const msg = String(err?.stderr || err?.stdout || err?.message || '').toLowerCase();
+    return msg.includes('gateway timeout') || msg.includes('timed out') || msg.includes('econnrefused') || msg.includes('other side closed');
+}
+
 async function restartGatewayCli() {
     const { code, stdout, stderr } = await runOpenClaw(['gateway', 'restart'], { timeoutMs: 120000 });
     if (code !== 0) {
@@ -973,7 +978,13 @@ async function cronCliAdd({ agentId, name, message, sessionTarget = 'isolated', 
         '--json'
     ];
     if (disabled) args.push('--disabled');
-    return runOpenClawJson(args, { timeoutMs: 30000 });
+    try {
+        return await runOpenClawJson(args, { timeoutMs: 30000 });
+    } catch (err) {
+        if (!isLikelyGatewayTimeout(err)) throw err;
+        await sleep(750);
+        return runOpenClawJson(args, { timeoutMs: 30000 });
+    }
 }
 
 async function cronCliRm(jobId) {
@@ -2383,7 +2394,11 @@ app.post('/api/tasks', async (req, res) => {
         const merged = await getCronJob(created.id);
         res.json({ ok: true, id: created.id, job: merged || created.job });
     } catch (error) {
-        res.status(500).json({ error: error.message });
+        res.status(500).json({
+            error: error.message,
+            stderr: error?.stderr ? String(error.stderr).slice(0, 4000) : undefined,
+            stdout: error?.stdout ? String(error.stdout).slice(0, 2000) : undefined
+        });
     }
 });
 
@@ -2625,7 +2640,11 @@ app.post('/api/broadcast', async (req, res) => {
             tasks: created
         });
     } catch (error) {
-        res.status(500).json({ error: error.message });
+        res.status(500).json({
+            error: error.message,
+            stderr: error?.stderr ? String(error.stderr).slice(0, 4000) : undefined,
+            stdout: error?.stdout ? String(error.stdout).slice(0, 2000) : undefined
+        });
     }
 });
 
