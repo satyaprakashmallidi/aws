@@ -1131,12 +1131,20 @@ function deriveStatusFromCronJob(job) {
     return 'scheduled';
 }
 
+function defaultDisabledAtIso() {
+    // openclaw enforces schedule.at <= 10 years in the future.
+    const years = process.env.TASK_DISABLED_AT_YEARS ? Number(process.env.TASK_DISABLED_AT_YEARS) : 9;
+    const safeYears = Number.isFinite(years) ? Math.max(1, Math.min(9.5, years)) : 9;
+    const ms = Math.floor(safeYears * 365 * 24 * 60 * 60 * 1000);
+    return new Date(Date.now() + ms).toISOString();
+}
+
 async function cronCliList() {
     const parsed = await runOpenClawJson(['cron', 'list', '--all', '--json'], { timeoutMs: 6000 });
     return Array.isArray(parsed?.jobs) ? parsed.jobs : [];
 }
 
-async function cronCliAdd({ agentId, name, message, sessionTarget = 'isolated', atIso = '2099-01-01T00:00:00Z', disabled = true } = {}) {
+async function cronCliAdd({ agentId, name, message, sessionTarget = 'isolated', atIso = defaultDisabledAtIso(), disabled = true } = {}) {
     const args = [
         'cron',
         'add',
@@ -1513,7 +1521,6 @@ async function createTask({ message, agentId = 'main', priority = 3, source = 'u
         name: spec.name,
         message: spec.payload.message,
         sessionTarget: 'isolated',
-        atIso: '2099-01-01T00:00:00Z',
         disabled: true
     });
 
@@ -3309,6 +3316,12 @@ async function taskWorkerTick() {
                     error: decision?.reason || runError || 'Failed',
                     lastDecision: { ...baseDecision, decision: 'failed', reason: `Max attempts reached. ${decision?.reason || ''}`.trim() }
                 });
+                try {
+                    const disabled = await applyAiEdits(jobId, { enabled: false });
+                    if (disabled.length) appendTaskLog(jobId, `Auto-disabled job after failure: ${disabled.join(', ')}`);
+                } catch {
+                    // ignore
+                }
                 appendTaskLog(jobId, 'Worker marked failed (max attempts)');
                 appendTaskNarrative(jobId, { role: 'system', agentId, text: `Failed after ${maxAttempts2} attempts: ${decision?.reason}` });
                 return;
@@ -3336,6 +3349,12 @@ async function taskWorkerTick() {
                 error: decision?.reason || runError || 'Failed',
                 lastDecision: baseDecision
             });
+            try {
+                const disabled = await applyAiEdits(jobId, { enabled: false });
+                if (disabled.length) appendTaskLog(jobId, `Auto-disabled job after failure: ${disabled.join(', ')}`);
+            } catch {
+                // ignore
+            }
             appendTaskLog(jobId, `Worker marked failed: ${decision?.reason}`);
             appendTaskNarrative(jobId, { role: 'system', agentId, text: `Failed: ${decision?.reason}` });
             return;
