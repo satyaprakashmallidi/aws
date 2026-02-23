@@ -3100,7 +3100,11 @@ async function applyAiEdits(jobId, edits) {
 const TASK_WORKER_ENABLED = process.env.TASK_WORKER_ENABLED !== 'false';
 const TASK_WORKER_INTERVAL_MS = process.env.TASK_WORKER_INTERVAL_MS
     ? Number(process.env.TASK_WORKER_INTERVAL_MS)
-    : 15_000;
+    : 15 * 60_000;
+
+const TASK_REVIEW_TRIAGE_INTERVAL_MS = process.env.TASK_REVIEW_TRIAGE_INTERVAL_MS
+    ? Number(process.env.TASK_REVIEW_TRIAGE_INTERVAL_MS)
+    : 15 * 60_000;
 
 const GATEWAY_KEEPALIVE_ENABLED = process.env.GATEWAY_KEEPALIVE_ENABLED !== 'false';
 const GATEWAY_KEEPALIVE_INTERVAL_MS = process.env.GATEWAY_KEEPALIVE_INTERVAL_MS
@@ -3163,7 +3167,7 @@ async function taskWorkerTick() {
                 if (meta?.status !== 'review') return false;
                 const lastTs = Date.parse(String(meta?.lastDecision?.ts || ''));
                 if (!Number.isFinite(lastTs)) return true;
-                return (Date.now() - lastTs) > 60_000;
+                return (Date.now() - lastTs) > Math.max(5_000, TASK_REVIEW_TRIAGE_INTERVAL_MS);
             })
             .sort(byPriority);
 
