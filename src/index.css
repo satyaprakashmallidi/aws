@@ -49,6 +49,16 @@
 .cl-footerActionLink,
 .cl-cardFooter,
 .cl-userButtonPopoverFooter,
-.cl-userProfileFooter {
+.cl-userProfileFooter,
+.cl-badge,
+.cl-badgeIcon,
+.cl-badgeText,
+.cl-developmentModeBadge {
+  display: none !important;
+}
+
+/* Fallback: if Clerk changes class names, hide their branding links in auth/profile UIs. */
+.cl-rootBox a[href*="clerk.com"],
+.cl-card a[href*="clerk.com"] {
   display: none !important;
 }

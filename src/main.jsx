@@ -14,7 +14,11 @@ const clerkAppearance = {
     footerActionLink: "hidden",
     cardFooter: "hidden",
     userButtonPopoverFooter: "hidden",
-    userProfileFooter: "hidden"
+    userProfileFooter: "hidden",
+    badge: "hidden",
+    badgeText: "hidden",
+    badgeIcon: "hidden",
+    developmentModeBadge: "hidden"
   }
 }
 
