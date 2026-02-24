@@ -31,6 +31,7 @@ function resolveOpenClawDir() {
 const OPENCLAW_DIR = resolveOpenClawDir();
 const OPENCLAW_CONFIG_PATH = process.env.OPENCLAW_CONFIG_PATH || path.join(OPENCLAW_DIR, 'openclaw.json');
 const WORKSPACE_DIR = process.env.OPENCLAW_WORKSPACE || path.join(OPENCLAW_DIR, 'workspace');
+const AGENT_WORKSPACES_DIR = process.env.OPENCLAW_AGENT_WORKSPACES_DIR || path.join(OPENCLAW_DIR, 'workspaces');
 const SOUL_PATHS = [
     path.join(OPENCLAW_DIR, 'memory', 'SOUL.md'),
     path.join(OPENCLAW_DIR, 'SOUL.md'),
@@ -877,6 +878,39 @@ function safeWorkspacePath(name) {
     const normalized = name.replace(/\\/g, '/').trim();
     if (normalized.startsWith('/') || normalized.includes('..')) return null;
     return path.join(WORKSPACE_DIR, normalized);
+}
+
+function isValidAgentId(agentId) {
+    const id = String(agentId || '').trim();
+    if (!id) return false;
+    if (id.length > 64) return false;
+    return /^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(id);
+}
+
+function normalizeModelConfig(value, fallback = { primary: '', fallbacks: [] }) {
+    if (!value) return { ...fallback };
+    if (typeof value === 'string') {
+        const primary = value.trim();
+        if (!primary) return { ...fallback };
+        return { primary, fallbacks: [] };
+    }
+    if (value && typeof value === 'object') {
+        const primary = typeof value.primary === 'string' ? value.primary.trim() : '';
+        if (!primary) return { ...fallback };
+        const fallbacks = Array.isArray(value.fallbacks)
+            ? value.fallbacks
+                .map((m) => (typeof m === 'string' ? m.trim() : ''))
+                .filter((m) => m && m !== primary)
+            : [];
+        return { primary, fallbacks };
+    }
+    return { ...fallback };
+}
+
+function getDefaultModelConfig(config) {
+    const raw = config?.agents?.defaults?.model;
+    if (typeof raw === 'string') return { primary: raw, fallbacks: [] };
+    return normalizeModelConfig(raw, { primary: '', fallbacks: [] });
 }
 
 function getAgentEntry(config, agentId) {
@@ -2538,6 +2572,9 @@ app.get('/api/workspace-list', (req, res) => {
 });
 
 app.get('/api/agents', async (req, res) => {
+    const userId = await requireClerkUserId(req, res);
+    if (!userId) return;
+
     try {
         const { action, id } = req.query;
         if (action === 'status') {
@@ -2557,20 +2594,22 @@ app.get('/api/agents', async (req, res) => {
                 sessions
             });
         }
+
+        const config = readConfigSafe();
+        const defaultModelConfig = getDefaultModelConfig(config);
+
         if (action === 'models') {
-            const config = readJson(OPENCLAW_CONFIG_PATH);
             return res.json(listModelsFromConfig(config));
         }
+
         if (id) {
-            const config = readJson(OPENCLAW_CONFIG_PATH);
             const agentEntry = getAgentEntry(config, id);
-            const identity = agentEntry?.identity || config.identity || { name: 'OpenClaw', emoji: '🦞' };
+            const identity = agentEntry?.identity || { name: String(id), emoji: '' };
             return res.json({
                 id,
-                description: agentEntry?.description || '',
-                model: config.agents?.defaults?.model?.primary || '',
+                model: normalizeModelConfig(agentEntry?.model, defaultModelConfig),
                 identity,
-                workspace: config.agents?.defaults?.workspace || WORKSPACE_DIR,
+                workspace: agentEntry?.workspace || config.agents?.defaults?.workspace || WORKSPACE_DIR,
                 availableModels: listModelsFromConfig(config).map(m => m.key),
                 providers: Object.keys(config.models?.providers || {})
             });
@@ -2579,48 +2618,166 @@ app.get('/api/agents', async (req, res) => {
         const response = await invokeTool('agents_list', {});
         const details = response?.result?.details || {};
         const agents = details.agents || response.agents || [];
-        const config = readJson(OPENCLAW_CONFIG_PATH);
-        const model = config.agents?.defaults?.model?.primary || '';
 
-        const enriched = agents.map(agent => ({
-            ...agent,
-            identity: getAgentEntry(config, agent?.id)?.identity || config.identity || { name: 'OpenClaw', emoji: '🦞' },
-            description: getAgentEntry(config, agent?.id)?.description || '',
-            model
-        }));
+        const enriched = agents.map(agent => {
+            const entry = getAgentEntry(config, agent?.id);
+            const modelConfig = normalizeModelConfig(entry?.model, defaultModelConfig);
+            const primary = modelConfig.primary || (typeof agent?.model === 'string' ? agent.model : '') || defaultModelConfig.primary || '';
+            return {
+                ...agent,
+                identity: entry?.identity || { name: agent?.id || 'agent', emoji: '' },
+                model: primary,
+                modelConfig
+            };
+        });
 
-        res.json({ agents: enriched, requester: details.requester || 'main', allowAny: details.allowAny || false });
+        return res.json({ agents: enriched, requester: details.requester || 'main', allowAny: details.allowAny || false });
     } catch (error) {
-        res.status(500).json({ error: error.message });
+        return res.status(500).json({ error: error.message });
     }
 });
 
-app.patch('/api/agents', (req, res) => {
-    const { id } = req.query;
-    if (!id) return res.status(400).json({ error: 'Agent ID required' });
-    try {
-        const updates = req.body || {};
-        const config = readJson(OPENCLAW_CONFIG_PATH);
-        if (!config.agents) config.agents = {};
-        if (!config.agents.defaults) config.agents.defaults = {};
+app.post('/api/agents', async (req, res) => {
+    const userId = await requireClerkUserId(req, res);
+    if (!userId) return;
 
-        if (updates.model) {
-            if (!config.agents.defaults.model) config.agents.defaults.model = {};
-            config.agents.defaults.model.primary = updates.model;
+    try {
+        const body = req.body && typeof req.body === 'object' ? req.body : {};
+        const id = String(body.id || '').trim();
+        if (!isValidAgentId(id)) return res.status(400).json({ error: 'Invalid agent id' });
+
+        const workspace = body.workspace
+            ? String(body.workspace)
+            : path.join(AGENT_WORKSPACES_DIR, id);
+        fs.mkdirSync(workspace, { recursive: true });
+
+        const { code, stdout, stderr } = await runOpenClaw(
+            ['agents', 'add', id, '--workspace', workspace, '--non-interactive'],
+            { timeoutMs: 90000 }
+        );
+        if (code !== 0) {
+            return res.status(500).json({ error: `Command failed with code ${code}`, stdout: stdout.slice(0, 4000), stderr: stderr.slice(0, 4000) });
         }
-        if (updates.identity?.name !== undefined) {
-            const entry = upsertAgentEntry(config, id);
+
+        const config = readConfigSafe();
+        const defaultModelConfig = getDefaultModelConfig(config);
+        const entry = upsertAgentEntry(config, id);
+
+        if (body.identity && typeof body.identity === 'object') {
             entry.identity = entry.identity || {};
-            entry.identity.name = updates.identity.name;
+            if (body.identity.name !== undefined) entry.identity.name = String(body.identity.name || '');
+            if (body.identity.emoji !== undefined) entry.identity.emoji = String(body.identity.emoji || '');
         }
-        if (updates.identity?.emoji !== undefined) {
-            const entry = upsertAgentEntry(config, id);
-            entry.identity = entry.identity || {};
-            entry.identity.emoji = updates.identity.emoji;
+
+        if (body.model !== undefined) {
+            const normalized = normalizeModelConfig(body.model, defaultModelConfig);
+            if (normalized.primary) entry.model = normalized;
+            else delete entry.model;
         }
 
         writeJson(OPENCLAW_CONFIG_PATH, config);
-        return res.json({ ok: true });
+        const restarted = await restartGatewayCli();
+        return res.json({
+            ok: true,
+            agent: {
+                id,
+                identity: entry.identity || { name: id, emoji: '' },
+                model: normalizeModelConfig(entry.model, defaultModelConfig),
+                workspace: entry.workspace || workspace
+            },
+            restarted
+        });
+    } catch (error) {
+        return res.status(500).json({ error: error.message });
+    }
+});
+
+app.patch('/api/agents', async (req, res) => {
+    const userId = await requireClerkUserId(req, res);
+    if (!userId) return;
+
+    const { id } = req.query;
+    if (!id) return res.status(400).json({ error: 'Agent ID required' });
+    if (!isValidAgentId(id)) return res.status(400).json({ error: 'Invalid agent id' });
+
+    try {
+        const updates = req.body || {};
+        const config = readConfigSafe();
+        const defaultModelConfig = getDefaultModelConfig(config);
+        const entry = upsertAgentEntry(config, id);
+
+        if (updates.model !== undefined) {
+            if (updates.model === null || updates.model === '') {
+                delete entry.model;
+            } else {
+                const normalized = normalizeModelConfig(updates.model, defaultModelConfig);
+                if (normalized.primary) entry.model = normalized;
+                else delete entry.model;
+            }
+        }
+
+        if (updates.identity && typeof updates.identity === 'object') {
+            entry.identity = entry.identity || {};
+            if (updates.identity.name !== undefined) entry.identity.name = String(updates.identity.name || '');
+            if (updates.identity.emoji !== undefined) entry.identity.emoji = String(updates.identity.emoji || '');
+        }
+
+        writeJson(OPENCLAW_CONFIG_PATH, config);
+        const restarted = await restartGatewayCli();
+        return res.json({
+            ok: true,
+            agent: {
+                id,
+                identity: entry.identity || { name: String(id), emoji: '' },
+                model: normalizeModelConfig(entry.model, defaultModelConfig),
+                workspace: entry.workspace || ''
+            },
+            restarted
+        });
+    } catch (error) {
+        return res.status(500).json({ error: error.message });
+    }
+});
+
+app.delete('/api/agents', async (req, res) => {
+    const userId = await requireClerkUserId(req, res);
+    if (!userId) return;
+
+    const { id } = req.query;
+    if (!id) return res.status(400).json({ error: 'Agent ID required' });
+    if (!isValidAgentId(id)) return res.status(400).json({ error: 'Invalid agent id' });
+    if (id === 'main') return res.status(400).json({ error: 'Cannot delete main agent' });
+
+    try {
+        const attempts = [
+            { args: ['agents', 'delete', id, '--force'], label: '--force' },
+            { args: ['agents', 'delete', id, '-f'], label: '-f' }
+        ];
+
+        let last = null;
+        for (const attempt of attempts) {
+            const { code, stdout, stderr } = await runOpenClaw(attempt.args, { timeoutMs: 90000 });
+            last = { code, stdout, stderr, attempt };
+            if (code === 0) {
+                try {
+                    const config = readConfigSafe();
+                    if (Array.isArray(config?.agents?.list)) {
+                        config.agents.list = config.agents.list.filter((a) => a?.id !== id);
+                        writeJson(OPENCLAW_CONFIG_PATH, config);
+                    }
+                } catch {
+                    // ignore
+                }
+                const restarted = await restartGatewayCli();
+                return res.json({ ok: true, id, restarted });
+            }
+        }
+
+        return res.status(500).json({
+            error: `Command failed${last?.attempt?.label ? ` (${last.attempt.label})` : ''}`,
+            stdout: last?.stdout?.slice(0, 4000),
+            stderr: last?.stderr?.slice(0, 4000)
+        });
     } catch (error) {
         return res.status(500).json({ error: error.message });
     }

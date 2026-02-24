@@ -1,21 +1,30 @@
 import React, { useState, useEffect } from 'react';
+import { useAuth } from '@clerk/clerk-react';
 import { apiUrl } from '../lib/apiBase';
-import { Settings, Circle, Cpu, Users } from 'lucide-react';
+import { Settings, Circle, Cpu, Users, Plus } from 'lucide-react';
+import CreateAgentModal from './CreateAgentModal';
 
 const FOCUS_RING = 'focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2';
 
 const AgentSidebar = ({ onAgentClick, selectedAgentId }) => {
+    const { getToken } = useAuth();
     const [agents, setAgents] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
+    const [isCreateOpen, setIsCreateOpen] = useState(false);
 
     useEffect(() => {
         fetchAgents();
-    }, []);
+    }, [getToken]);
 
     const fetchAgents = async () => {
         try {
-            const response = await fetch(apiUrl('/api/agents'));
+            const token = await getToken();
+            const response = await fetch(apiUrl('/api/agents'), {
+                headers: {
+                    ...(token ? { Authorization: `Bearer ${token}` } : {})
+                }
+            });
             if (!response.ok) throw new Error('Failed to fetch agents');
             const data = await response.json();
             setAgents(data.agents || []);
@@ -42,9 +51,19 @@ const AgentSidebar = ({ onAgentClick, selectedAgentId }) => {
                     <Users className="w-5 h-5 text-blue-600" aria-hidden="true" />
                     Agents
                 </h2>
-                <span className="bg-blue-100 text-blue-800 text-xs font-medium px-2.5 py-0.5 rounded-full">
-                    {agents.length}
-                </span>
+                <div className="flex items-center gap-2">
+                    <span className="bg-blue-100 text-blue-800 text-xs font-medium px-2.5 py-0.5 rounded-full">
+                        {agents.length}
+                    </span>
+                    <button
+                        type="button"
+                        onClick={() => setIsCreateOpen(true)}
+                        aria-label="Create agent"
+                        className={`rounded-md p-1.5 text-gray-500 transition-colors hover:bg-blue-100 hover:text-blue-700 ${FOCUS_RING}`}
+                    >
+                        <Plus className="w-4 h-4" aria-hidden="true" />
+                    </button>
+                </div>
             </div>
 
             <div className="flex-1 overflow-y-auto p-2 space-y-2">
@@ -91,7 +110,12 @@ const AgentSidebar = ({ onAgentClick, selectedAgentId }) => {
 
                         <div className="flex items-center gap-1.5 bg-gray-100 px-2 py-1 rounded text-xs text-gray-600 w-fit">
                             <Cpu className="w-3 h-3" aria-hidden="true" />
-                            <span className="truncate max-w-[120px]">{agent.model}</span>
+                            <span className="truncate max-w-[120px]">
+                                {agent.model}
+                                {Array.isArray(agent.modelConfig?.fallbacks) && agent.modelConfig.fallbacks.length > 0
+                                    ? ` (+${agent.modelConfig.fallbacks.length})`
+                                    : ''}
+                            </span>
                         </div>
                     </div>
                 ))}
@@ -102,6 +126,15 @@ const AgentSidebar = ({ onAgentClick, selectedAgentId }) => {
                     </div>
                 )}
             </div>
+
+            <CreateAgentModal
+                isOpen={isCreateOpen}
+                onClose={() => setIsCreateOpen(false)}
+                onCreated={() => {
+                    setLoading(true);
+                    fetchAgents();
+                }}
+            />
         </div>
     );
 };

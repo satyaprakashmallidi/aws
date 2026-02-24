@@ -1,12 +1,15 @@
 import React, { useState, useEffect } from 'react';
+import { useAuth } from '@clerk/clerk-react';
 import { apiUrl } from '../lib/apiBase';
-import { X, Save, AlertCircle } from 'lucide-react';
+import { X, Save, AlertCircle, Trash2 } from 'lucide-react';
 
 const FOCUS_RING = 'focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2';
 
 const AgentSettingsModal = ({ agent, isOpen, onClose, onUpdate }) => {
+    const { getToken } = useAuth();
     const [formData, setFormData] = useState({
-        model: '',
+        modelPrimary: '',
+        modelFallbacks: [],
         identityName: '',
         identityEmoji: ''
     });
@@ -20,8 +23,15 @@ const AgentSettingsModal = ({ agent, isOpen, onClose, onUpdate }) => {
             const timestamp = Date.now();
             // Fetch models
             setLoadingModels(true);
-            fetch(apiUrl(`/api/agents?action=models&t=${timestamp}`))
-                .then(res => res.json())
+            getToken()
+                .then((token) => ({ token }))
+                .then(({ token }) => {
+                    return fetch(apiUrl(`/api/agents?action=models&t=${timestamp}`), {
+                        headers: {
+                            ...(token ? { Authorization: `Bearer ${token}` } : {})
+                        }
+                    }).then(res => res.json());
+                })
                 .then(data => {
                     setAvailableModels(Array.isArray(data) ? data : []);
                 })
@@ -29,18 +39,30 @@ const AgentSettingsModal = ({ agent, isOpen, onClose, onUpdate }) => {
                 .finally(() => setLoadingModels(false));
 
             // Fetch full agent config
-            fetch(apiUrl(`/api/agents?id=${agent.id}&t=${timestamp}`))
-                .then(res => res.json())
+            getToken()
+                .then((token) => ({ token }))
+                .then(({ token }) => {
+                    return fetch(apiUrl(`/api/agents?id=${agent.id}&t=${timestamp}`), {
+                        headers: {
+                            ...(token ? { Authorization: `Bearer ${token}` } : {})
+                        }
+                    }).then(res => res.json());
+                })
                 .then(fullConfig => {
+                    const rawModel = fullConfig?.model;
+                    const modelPrimary = typeof rawModel === 'string' ? rawModel : (rawModel?.primary || '');
+                    const modelFallbacks = Array.isArray(rawModel?.fallbacks) ? rawModel.fallbacks : [];
+
                     setFormData({
-                        model: fullConfig.model || '',
+                        modelPrimary,
+                        modelFallbacks,
                         identityName: fullConfig.identity?.name || '',
                         identityEmoji: fullConfig.identity?.emoji || ''
                     });
                 })
                 .catch(err => console.error('Failed to load full config', err));
         }
-    }, [isOpen, agent]);
+    }, [getToken, isOpen, agent]);
 
     if (!isOpen || !agent) return null;
 
@@ -51,24 +73,56 @@ const AgentSettingsModal = ({ agent, isOpen, onClose, onUpdate }) => {
 
         try {
             const updates = {
-                model: formData.model,
+                model: {
+                    primary: formData.modelPrimary,
+                    fallbacks: formData.modelFallbacks
+                },
                 identity: {
-                    ...agent.identity,
                     name: formData.identityName,
                     emoji: formData.identityEmoji
                 }
             };
 
+            const token = await getToken();
+
             const response = await fetch(apiUrl(`/api/agents?id=${agent.id}`), {
                 method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...(token ? { Authorization: `Bearer ${token}` } : {})
+                },
                 body: JSON.stringify(updates)
             });
 
-            if (!response.ok) throw new Error('Failed to update agent');
+            const data = await response.json().catch(() => null);
+            if (!response.ok) throw new Error(data?.error || 'Failed to update agent');
 
-            const updatedAgent = await response.json();
-            onUpdate(updatedAgent);
+            onUpdate(data?.agent || { id: agent.id });
+            onClose();
+        } catch (err) {
+            setError(err.message);
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    const handleDelete = async () => {
+        if (!window.confirm(`Delete agent "${agent.id}"? This will remove it from the gateway.`)) return;
+        setSaving(true);
+        setError(null);
+
+        try {
+            const token = await getToken();
+            const response = await fetch(apiUrl(`/api/agents?id=${agent.id}`), {
+                method: 'DELETE',
+                headers: {
+                    ...(token ? { Authorization: `Bearer ${token}` } : {})
+                }
+            });
+
+            const data = await response.json().catch(() => null);
+            if (!response.ok) throw new Error(data?.error || 'Failed to delete agent');
+            onUpdate({ id: agent.id, deleted: true });
             onClose();
         } catch (err) {
             setError(err.message);
@@ -136,64 +190,98 @@ const AgentSettingsModal = ({ agent, isOpen, onClose, onUpdate }) => {
                     </div>
 
                     <div>
-                        <label htmlFor="agent-model" className="block text-sm font-medium text-gray-700 mb-1">
-                            Model Selection
+                        <label htmlFor="agent-model-primary" className="block text-sm font-medium text-gray-700 mb-1">
+                            Primary Model
                         </label>
                         {loadingModels ? (
                             <div className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-gray-50 text-gray-400 text-sm">
                                 Loading models…
                             </div>
                         ) : (
-                            <div className="relative">
-                                <select
-                                    id="agent-model"
-                                    name="model"
-                                    value={formData.model}
-                                    onChange={(e) => setFormData({ ...formData, model: e.target.value })}
-                                    className={`w-full appearance-none rounded-lg border border-gray-300 bg-white px-3 py-2 shadow-sm transition-colors ${FOCUS_RING}`}
-                                >
-                                    <option value="">Select a model…</option>
-                                    {availableModels.map((model) => (
-                                        <option key={model.key} value={model.key}>
-                                            {model.name} ({model.key})
-                                        </option>
-                                    ))}
-                                </select>
-                                <div className="absolute inset-y-0 right-0 flex items-center px-2 pointer-events-none">
-                                    <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
-                                </div>
-                            </div>
+                            <select
+                                id="agent-model-primary"
+                                name="modelPrimary"
+                                value={formData.modelPrimary}
+                                onChange={(e) => setFormData({ ...formData, modelPrimary: e.target.value, modelFallbacks: formData.modelFallbacks.filter(fb => fb !== e.target.value) })}
+                                className={`w-full rounded-lg border border-gray-300 bg-white px-3 py-2 shadow-sm transition-colors ${FOCUS_RING}`}
+                            >
+                                <option value="">Select a model…</option>
+                                {availableModels.map((model) => (
+                                    <option key={model.key} value={model.key}>
+                                        {model.name} ({model.key})
+                                    </option>
+                                ))}
+                            </select>
                         )}
-                        <p className="mt-1 text-xs text-gray-500">
-                            Select the primary AI model for this agent.
-                        </p>
                     </div>
 
-                    <div className="flex justify-end gap-3 pt-4">
+                    <div>
+                        <label htmlFor="agent-model-fallbacks" className="block text-sm font-medium text-gray-700 mb-1">
+                            Fallback Models (optional)
+                        </label>
+                        {loadingModels ? (
+                            <div className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-gray-50 text-gray-400 text-sm">
+                                Loading models…
+                            </div>
+                        ) : (
+                            <select
+                                id="agent-model-fallbacks"
+                                multiple
+                                name="modelFallbacks"
+                                value={formData.modelFallbacks}
+                                onChange={(e) => {
+                                    const values = Array.from(e.target.selectedOptions).map(o => o.value);
+                                    setFormData({ ...formData, modelFallbacks: values.filter(v => v && v !== formData.modelPrimary) });
+                                }}
+                                className={`w-full rounded-lg border border-gray-300 bg-white px-3 py-2 shadow-sm transition-colors min-h-[120px] ${FOCUS_RING}`}
+                            >
+                                {availableModels.map((model) => (
+                                    <option key={model.key} value={model.key}>
+                                        {model.name} ({model.key})
+                                    </option>
+                                ))}
+                            </select>
+                        )}
+                        <p className="mt-1 text-xs text-gray-500">Hold Ctrl/Cmd to select multiple.</p>
+                    </div>
+
+                    <div className="flex items-center justify-between gap-3 pt-4">
                         <button
                             type="button"
-                            onClick={onClose}
-                            className={`rounded-lg px-4 py-2 font-semibold text-gray-700 transition-colors hover:bg-gray-100 ${FOCUS_RING}`}
+                            onClick={handleDelete}
+                            disabled={saving || agent.id === 'main'}
+                            className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 font-semibold text-red-700 transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50 ${FOCUS_RING}`}
                         >
-                            Cancel
+                            <Trash2 className="w-4 h-4" aria-hidden="true" />
+                            Delete
                         </button>
-                        <button
-                            type="submit"
-                            disabled={saving}
-                            className={`flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 font-semibold text-white shadow-sm transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50 ${FOCUS_RING}`}
-                        >
-                            {saving ? (
-                                <>
-                                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin motion-reduce:animate-none" aria-hidden="true" />
-                                    Saving…
-                                </>
-                            ) : (
-                                <>
-                                    <Save className="w-4 h-4" aria-hidden="true" />
-                                    Save Changes
-                                </>
-                            )}
-                        </button>
+
+                        <div className="flex items-center gap-3">
+                            <button
+                                type="button"
+                                onClick={onClose}
+                                className={`rounded-lg px-4 py-2 font-semibold text-gray-700 transition-colors hover:bg-gray-100 ${FOCUS_RING}`}
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                type="submit"
+                                disabled={saving}
+                                className={`flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 font-semibold text-white shadow-sm transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50 ${FOCUS_RING}`}
+                            >
+                                {saving ? (
+                                    <>
+                                        <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin motion-reduce:animate-none" aria-hidden="true" />
+                                        Saving…
+                                    </>
+                                ) : (
+                                    <>
+                                        <Save className="w-4 h-4" aria-hidden="true" />
+                                        Save Changes
+                                    </>
+                                )}
+                            </button>
+                        </div>
                     </div>
                 </form>
             </div>

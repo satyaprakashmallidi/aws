@@ -1,12 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { UserButton } from "@clerk/clerk-react";
+import { useAuth } from '@clerk/clerk-react';
 import { health } from '../lib/api';
 import { apiUrl } from '../lib/apiBase';
 import { Menu, X } from 'lucide-react';
 
 const Header = () => {
     const location = useLocation();
+    const { getToken } = useAuth();
     const [gatewayStatus, setGatewayStatus] = useState('offline');
     const [agentCount, setAgentCount] = useState(0);
     const [mobileOpen, setMobileOpen] = useState(false);
@@ -36,7 +38,12 @@ const Header = () => {
 
     const fetchAgentCount = async () => {
         try {
-            const response = await fetch(apiUrl(`/api/agents?t=${Date.now()}`));
+            const token = await getToken();
+            const response = await fetch(apiUrl(`/api/agents?t=${Date.now()}`), {
+                headers: {
+                    ...(token ? { Authorization: `Bearer ${token}` } : {})
+                }
+            });
             if (!response.ok) return;
             const data = await response.json().catch(() => null);
             const count = Array.isArray(data?.agents) ? data.agents.length : 0;

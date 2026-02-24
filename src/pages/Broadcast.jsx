@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useAuth } from '@clerk/clerk-react';
 import { apiUrl } from '../lib/apiBase';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -7,6 +8,7 @@ import { Bot, RefreshCw, Send, User, Loader2 } from 'lucide-react';
 const FOCUS_RING = 'focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2';
 
 const Broadcast = () => {
+    const { getToken } = useAuth();
     const [agents, setAgents] = useState([]);
     const [selectedAgents, setSelectedAgents] = useState([]);
     const [message, setMessage] = useState('');
@@ -53,7 +55,12 @@ const Broadcast = () => {
 
     const fetchAgents = async () => {
         try {
-            const response = await fetch(apiUrl('/api/agents'));
+            const token = await getToken();
+            const response = await fetch(apiUrl('/api/agents'), {
+                headers: {
+                    ...(token ? { Authorization: `Bearer ${token}` } : {})
+                }
+            });
             const data = await response.json();
             setAgents(data.agents || []);
             setSelectedAgents((data.agents || []).map(a => a.id));
