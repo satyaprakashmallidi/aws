@@ -6,6 +6,8 @@ import * as readline from 'node:readline';
 import cors from 'cors';
 import { execFile, spawn } from 'child_process';
 import crypto from 'crypto';
+import { createClient } from '@supabase/supabase-js';
+import { verifyToken } from '@clerk/backend';
 
 const app = express();
 
@@ -40,7 +42,63 @@ const GATEWAY_URL = process.env.OPENCLAW_GATEWAY_URL || 'http://127.0.0.1:18789'
 const GATEWAY_TOKEN = process.env.OPENCLAW_GATEWAY_TOKEN;
 const LOCAL_API_SECRET = process.env.LOCAL_API_SECRET || '';
 
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+const CLERK_SECRET_KEY = process.env.CLERK_SECRET_KEY;
+const CLERK_JWT_KEY = process.env.CLERK_JWT_KEY;
+
+const supabaseAdmin = (SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY)
+    ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+        auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false }
+    })
+    : null;
+
 let chatInFlight = 0;
+
+function requireSupabaseAdmin(req, res) {
+    if (supabaseAdmin) return supabaseAdmin;
+    if (!SUPABASE_URL) res.status(500).json({ error: 'SUPABASE_URL not set' });
+    else if (!SUPABASE_SERVICE_ROLE_KEY) res.status(500).json({ error: 'SUPABASE_SERVICE_ROLE_KEY not set' });
+    else res.status(500).json({ error: 'Supabase admin client not configured' });
+    return null;
+}
+
+function getBearerToken(req) {
+    const header = req.headers?.authorization || req.headers?.Authorization;
+    if (!header || typeof header !== 'string') return null;
+    const match = header.match(/^Bearer\s+(.+)$/i);
+    return match?.[1]?.trim() || null;
+}
+
+async function requireClerkUserId(req, res) {
+    const token = getBearerToken(req);
+    if (!token) {
+        res.status(401).json({ error: 'Missing Authorization: Bearer <token>' });
+        return null;
+    }
+
+    if (!CLERK_JWT_KEY && !CLERK_SECRET_KEY) {
+        res.status(500).json({ error: 'Set CLERK_JWT_KEY (recommended) or CLERK_SECRET_KEY to verify tokens' });
+        return null;
+    }
+
+    try {
+        const verified = await verifyToken(token, {
+            ...(CLERK_JWT_KEY ? { jwtKey: CLERK_JWT_KEY } : {}),
+            ...(CLERK_SECRET_KEY ? { secretKey: CLERK_SECRET_KEY } : {})
+        });
+        const userId = verified?.sub;
+        if (!userId) {
+            res.status(401).json({ error: 'Invalid token (missing sub claim)' });
+            return null;
+        }
+        return userId;
+    } catch {
+        res.status(401).json({ error: 'Invalid token' });
+        return null;
+    }
+}
 
 function resolveOpenClawCliPath() {
     if (process.env.OPENCLAW_CLI_PATH) return process.env.OPENCLAW_CLI_PATH;
@@ -1734,6 +1792,54 @@ app.get('/api/health', async (req, res) => {
         return res.json({ status: 'online', ts: new Date().toISOString() });
     } catch (error) {
         return res.status(200).json({ status: 'offline', message: error.message });
+    }
+});
+
+app.post('/api/user/profile/sync', async (req, res) => {
+    const userId = await requireClerkUserId(req, res);
+    if (!userId) return;
+
+    const { username } = req.body || {};
+    const normalizedUsername = typeof username === 'string' ? username.trim() : '';
+    if (!normalizedUsername) {
+        return res.status(400).json({ error: 'username is required' });
+    }
+
+    const sb = requireSupabaseAdmin(req, res);
+    if (!sb) return;
+
+    try {
+        const { data, error } = await sb
+            .from('user_profiles')
+            .upsert({ userid: userId, username: normalizedUsername }, { onConflict: 'userid' })
+            .select('*')
+            .single();
+
+        if (error) return res.status(500).json({ error: error.message });
+        return res.json({ profile: data });
+    } catch (error) {
+        return res.status(500).json({ error: error?.message || 'Failed to sync profile' });
+    }
+});
+
+app.get('/api/user/profile', async (req, res) => {
+    const userId = await requireClerkUserId(req, res);
+    if (!userId) return;
+
+    const sb = requireSupabaseAdmin(req, res);
+    if (!sb) return;
+
+    try {
+        const { data, error } = await sb
+            .from('user_profiles')
+            .select('*')
+            .eq('userid', userId)
+            .maybeSingle();
+
+        if (error) return res.status(500).json({ error: error.message });
+        return res.json({ profile: data || null });
+    } catch (error) {
+        return res.status(500).json({ error: error?.message || 'Failed to fetch profile' });
     }
 });
 

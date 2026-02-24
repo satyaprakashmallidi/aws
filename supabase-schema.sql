@@ -107,3 +107,27 @@ CREATE TRIGGER update_sessions_updated_at
 -- VALUES
 --     ((SELECT id FROM sessions WHERE title = 'Test Session 1' LIMIT 1), 'user', 'Hello!'),
 --     ((SELECT id FROM sessions WHERE title = 'Test Session 1' LIMIT 1), 'assistant', 'Hi! How can I help?');
+
+-- =============================================
+-- USER PROFILES TABLE (Clerk)
+-- =============================================
+
+DO $$ BEGIN
+    CREATE TYPE user_operation_status AS ENUM ('onboarded', 'paid', 'provisioning', 'ready', 'suspended');
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
+
+CREATE TABLE IF NOT EXISTS user_profiles (
+    userid TEXT PRIMARY KEY NOT NULL,
+    username TEXT NOT NULL,
+    docker_volume_name TEXT,
+    docker_container_name TEXT,
+    port_number INTEGER,
+    gateway_name TEXT,
+    gateway_token TEXT,
+    local_websocket TEXT,
+    operation_status user_operation_status NOT NULL DEFAULT 'onboarded'
+);
+
+ALTER TABLE user_profiles ENABLE ROW LEVEL SECURITY;

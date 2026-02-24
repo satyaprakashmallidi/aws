@@ -1,8 +1,49 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import { Outlet } from 'react-router-dom';
+import { useAuth, useUser } from '@clerk/clerk-react';
 import Header from './Header';
+import { apiUrl } from '../lib/apiBase';
 
 const Layout = () => {
+    const { isLoaded, isSignedIn, user } = useUser();
+    const { getToken } = useAuth();
+    const didSyncRef = useRef(false);
+
+    useEffect(() => {
+        if (!isLoaded || !isSignedIn) return;
+        if (!user?.id) return;
+        if (didSyncRef.current) return;
+
+        const username =
+            user.primaryEmailAddress?.emailAddress
+            || user.emailAddresses?.[0]?.emailAddress
+            || user.username
+            || user.fullName
+            || user.id;
+
+        const run = async () => {
+            const token = await getToken();
+            const res = await fetch(apiUrl('/api/user/profile/sync'), {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...(token ? { Authorization: `Bearer ${token}` } : {})
+                },
+                body: JSON.stringify({ username })
+            });
+
+            if (!res.ok) {
+                const text = await res.text().catch(() => '');
+                throw new Error(`Failed to sync profile: ${res.status} ${text}`);
+            }
+        };
+
+        didSyncRef.current = true;
+        run().catch((err) => {
+            console.error(err);
+        });
+    }, [getToken, isLoaded, isSignedIn, user]);
+
     return (
         <div className="flex h-dvh flex-col overflow-hidden bg-slate-50 text-slate-900">
             <a

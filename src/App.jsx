@@ -9,6 +9,7 @@ import Settings from './pages/Settings';
 import Landing from './pages/Landing';
 import SignInPage from './pages/SignIn';
 import SignUpPage from './pages/SignUp';
+import SsoCallback from './pages/SsoCallback';
 import './index.css';
 
 function App() {
@@ -27,6 +28,7 @@ function App() {
                     path="/sign-up/*"
                     element={<SignUpPage />}
                 />
+                <Route path="/sso-callback" element={<SsoCallback />} />
 
                 {/* Protected Routes */}
                 <Route

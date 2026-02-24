@@ -80,7 +80,7 @@ const SignUpPage = () => {
         try {
             await signUp.authenticateWithRedirect({
                 strategy: 'oauth_google',
-                redirectUrl: '/sign-up',
+                redirectUrl: '/sso-callback',
                 redirectUrlComplete: '/app'
             });
         } catch (err) {

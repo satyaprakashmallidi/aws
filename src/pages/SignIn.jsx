@@ -61,7 +61,7 @@ const SignInPage = () => {
         try {
             await signIn.authenticateWithRedirect({
                 strategy: 'oauth_google',
-                redirectUrl: '/sign-in',
+                redirectUrl: '/sso-callback',
                 redirectUrlComplete: '/app'
             });
         } catch (err) {
