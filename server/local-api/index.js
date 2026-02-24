@@ -790,6 +790,7 @@ function newSessionId() {
 
 const allowedOrigins = [
     'https://openclaw-frontend.vercel.app',
+    'https://automation-1.magicteams.ai',
     'https://openclaw.ai',
     'https://app.openclaw.ai',
     'https://api.magicteams.ai'
@@ -2644,6 +2645,11 @@ app.post('/api/chat', async (req, res) => {
             messages: [{ role: 'user', content: message }],
             stream: Boolean(stream)
         };
+
+        const chatTimeoutMs = process.env.CHAT_TIMEOUT_MS
+            ? Number(process.env.CHAT_TIMEOUT_MS)
+            : 90_000;
+
         const response = await fetch(`${GATEWAY_URL.replace(/\/$/, '')}/v1/chat/completions`, {
             method: 'POST',
             headers: {
@@ -2652,7 +2658,8 @@ app.post('/api/chat', async (req, res) => {
                 ...(agentId !== 'main' ? { 'x-openclaw-agent-id': agentId } : {}),
                 ...(sessionId ? { 'x-openclaw-session-key': sessionId } : {})
             },
-            body: JSON.stringify(payload)
+            body: JSON.stringify(payload),
+            signal: AbortSignal.timeout(Math.max(2_000, Number.isFinite(chatTimeoutMs) ? chatTimeoutMs : 90_000))
         });
         if (!response.ok) {
             const text = await response.text();
@@ -2669,7 +2676,11 @@ app.post('/api/chat', async (req, res) => {
         const data = await response.json();
         res.json(data);
     } catch (error) {
-        res.status(500).json({ error: error.message });
+        const msg = error?.message || 'Request failed';
+        if (String(msg).toLowerCase().includes('timeout') || error?.name === 'AbortError') {
+            return res.status(504).json({ error: 'Gateway timeout' });
+        }
+        res.status(500).json({ error: msg });
     } finally {
         chatInFlight = Math.max(0, chatInFlight - 1);
     }
