@@ -16,6 +16,10 @@ const KanbanBoard = () => {
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [createOpen, setCreateOpen] = useState(false);
+    const [detailsOpen, setDetailsOpen] = useState(false);
+    const [detailsLoading, setDetailsLoading] = useState(false);
+    const [detailsError, setDetailsError] = useState('');
+    const [detailsTask, setDetailsTask] = useState(null);
     const [newMessage, setNewMessage] = useState('');
     const [newPriority, setNewPriority] = useState(3);
 
@@ -92,6 +96,36 @@ const KanbanBoard = () => {
         } finally {
             setSaving(false);
         }
+    };
+
+    const openDetails = async (task) => {
+        if (!task?.id) return;
+        setDetailsOpen(true);
+        setDetailsLoading(true);
+        setDetailsError('');
+        setDetailsTask(null);
+        try {
+            const res = await fetch(apiUrl(`/api/tasks?ids=${encodeURIComponent(String(task.id))}&includeNarrative=true&includeLog=true&limit=1&t=${Date.now()}`));
+            if (!res.ok) {
+                const text = await res.text().catch(() => '');
+                throw new Error(`Failed to load details: ${res.status} ${text}`);
+            }
+            const data = await res.json();
+            const full = Array.isArray(data?.jobs) ? data.jobs[0] : null;
+            setDetailsTask(full || task);
+        } catch (err) {
+            setDetailsError(err?.message || 'Failed to load details');
+            setDetailsTask(task);
+        } finally {
+            setDetailsLoading(false);
+        }
+    };
+
+    const closeDetails = () => {
+        setDetailsOpen(false);
+        setDetailsError('');
+        setDetailsLoading(false);
+        setDetailsTask(null);
     };
 
     if (loading) {
@@ -235,29 +269,15 @@ const KanbanBoard = () => {
                                                 {task.payload?.message || task?.metadata?.message || 'No description'}
                                             </p>
 
-                                            <div className="mt-2 flex items-center gap-2 flex-wrap">
-                                                {task?.agentId && (
-                                                    <span className="bg-gray-100 text-gray-700 text-[10px] px-1.5 py-0.5 rounded border border-gray-200">
-                                                        {String(task.agentId)}
-                                                    </span>
-                                                )}
-                                                {task?.metadata?.priority && (
-                                                    <span className="bg-gray-100 text-gray-700 text-[10px] px-1.5 py-0.5 rounded border border-gray-200">
-                                                        p{task.metadata.priority}
-                                                    </span>
-                                                )}
-                                                {getTaskStatus(task) && (
-                                                    <span className="bg-gray-100 text-gray-700 text-[10px] px-1.5 py-0.5 rounded border border-gray-200">
-                                                        {getTaskStatus(task)}
-                                                    </span>
-                                                )}
+                                            <div className="mt-3 flex justify-end">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => openDetails(task)}
+                                                    className="rounded-md border border-gray-200 bg-white px-2.5 py-1 text-xs font-semibold text-gray-800 shadow-sm hover:bg-gray-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+                                                >
+                                                    View details
+                                                </button>
                                             </div>
-
-                                            {task?.metadata?.lastDecision?.reason && (
-                                                <div className="mt-2 text-[11px] text-gray-600 line-clamp-2">
-                                                    {String(task.metadata.lastDecision.reason)}
-                                                </div>
-                                            )}
                                         </div>
                                     ))}
                                 </div>
@@ -267,8 +287,142 @@ const KanbanBoard = () => {
                 </div>
             </div>
 
+            {detailsOpen && (
+                <div className="fixed inset-0 z-50 overscroll-contain">
+                    <button
+                        type="button"
+                        aria-label="Close dialog"
+                        className="absolute inset-0 bg-black/40"
+                        onClick={() => !detailsLoading && closeDetails()}
+                    />
+
+                    <div className="relative flex min-h-full items-center justify-center p-4">
+                        <div
+                            role="dialog"
+                            aria-modal="true"
+                            className="w-full max-w-3xl overflow-hidden rounded-xl bg-white shadow-xl ring-1 ring-black/5"
+                        >
+                            <div className="flex items-start justify-between gap-4 border-b border-gray-200 px-4 py-3">
+                                <div className="min-w-0">
+                                    <div className="text-sm font-semibold text-gray-900">Task details</div>
+                                    <div className="mt-0.5 text-xs text-gray-500 line-clamp-1">
+                                        {detailsTask?.name || '—'}
+                                    </div>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={closeDetails}
+                                    disabled={detailsLoading}
+                                    className="shrink-0 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-gray-900 shadow-sm hover:bg-gray-50 disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+                                >
+                                    Close
+                                </button>
+                            </div>
+
+                            <div className="max-h-[70vh] overflow-y-auto p-4">
+                                {detailsLoading && (
+                                    <div className="text-sm text-gray-600">Loading…</div>
+                                )}
+
+                                {detailsError && (
+                                    <div className="mb-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                                        {detailsError}
+                                    </div>
+                                )}
+
+                                {detailsTask && (
+                                    <div className="space-y-4">
+                                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                                            <Field label="ID" value={detailsTask.id} />
+                                            <Field label="Status" value={getTaskStatus(detailsTask) || '—'} />
+                                            <Field label="Agent" value={detailsTask.agentId || '—'} />
+                                            <Field label="Priority" value={detailsTask?.metadata?.priority ? `p${detailsTask.metadata.priority}` : '—'} />
+                                            <Field label="Created" value={detailsTask?.metadata?.createdAt || detailsTask?.createdAt || '—'} />
+                                            <Field label="Updated" value={detailsTask?.metadata?.updatedAt || detailsTask?.updatedAt || '—'} />
+                                        </div>
+
+                                        <div>
+                                            <div className="text-xs font-semibold text-gray-700">Message</div>
+                                            <div className="mt-1 whitespace-pre-wrap rounded-lg border border-gray-200 bg-gray-50 p-3 text-sm text-gray-800">
+                                                {detailsTask?.payload?.message || detailsTask?.metadata?.message || '—'}
+                                            </div>
+                                        </div>
+
+                                        {detailsTask?.metadata?.lastRun && (
+                                            <div>
+                                                <div className="text-xs font-semibold text-gray-700">Last run</div>
+                                                <div className="mt-1 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                                                    <Field label="Run status" value={detailsTask.metadata.lastRun.status || '—'} />
+                                                    <Field label="Run ts" value={detailsTask.metadata.lastRun.ts || '—'} />
+                                                </div>
+                                                {(detailsTask.metadata.lastRun.error || detailsTask.metadata.lastRun.summary) && (
+                                                    <div className="mt-2 space-y-2">
+                                                        {detailsTask.metadata.lastRun.error && (
+                                                            <div>
+                                                                <div className="text-xs font-semibold text-gray-700">Error</div>
+                                                                <pre className="mt-1 whitespace-pre-wrap rounded-lg border border-gray-200 bg-gray-50 p-3 text-xs text-gray-800">{String(detailsTask.metadata.lastRun.error)}</pre>
+                                                            </div>
+                                                        )}
+                                                        {detailsTask.metadata.lastRun.summary && (
+                                                            <div>
+                                                                <div className="text-xs font-semibold text-gray-700">Summary</div>
+                                                                <pre className="mt-1 whitespace-pre-wrap rounded-lg border border-gray-200 bg-gray-50 p-3 text-xs text-gray-800">{String(detailsTask.metadata.lastRun.summary)}</pre>
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        )}
+
+                                        {detailsTask?.metadata?.lastDecision && (
+                                            <div>
+                                                <div className="text-xs font-semibold text-gray-700">Last decision</div>
+                                                <div className="mt-1 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                                                    <Field label="Decision" value={detailsTask.metadata.lastDecision.decision || '—'} />
+                                                    <Field label="Decision ts" value={detailsTask.metadata.lastDecision.ts || '—'} />
+                                                </div>
+                                                {detailsTask.metadata.lastDecision.reason && (
+                                                    <pre className="mt-2 whitespace-pre-wrap rounded-lg border border-gray-200 bg-gray-50 p-3 text-xs text-gray-800">{String(detailsTask.metadata.lastDecision.reason)}</pre>
+                                                )}
+                                            </div>
+                                        )}
+
+                                        {Array.isArray(detailsTask?.metadata?.log) && detailsTask.metadata.log.length > 0 && (
+                                            <div>
+                                                <div className="text-xs font-semibold text-gray-700">Log</div>
+                                                <pre className="mt-1 max-h-56 overflow-y-auto whitespace-pre-wrap rounded-lg border border-gray-200 bg-gray-50 p-3 text-xs text-gray-800">{detailsTask.metadata.log.join('\n')}</pre>
+                                            </div>
+                                        )}
+
+                                        {Array.isArray(detailsTask?.metadata?.narrative) && detailsTask.metadata.narrative.length > 0 && (
+                                            <div>
+                                                <div className="text-xs font-semibold text-gray-700">Narrative</div>
+                                                <pre className="mt-1 max-h-56 overflow-y-auto whitespace-pre-wrap rounded-lg border border-gray-200 bg-gray-50 p-3 text-xs text-gray-800">{detailsTask.metadata.narrative.map((n) => {
+                                                    const ts = n?.ts ? String(n.ts) : '';
+                                                    const role = n?.role ? String(n.role) : '';
+                                                    const agentId = n?.agentId ? String(n.agentId) : '';
+                                                    const text = n?.text ? String(n.text) : '';
+                                                    return `${ts} ${agentId ? `[${agentId}] ` : ''}${role ? `${role}: ` : ''}${text}`.trim();
+                                                }).join('\n\n')}</pre>
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
         </div>
     );
 };
+
+const Field = ({ label, value }) => (
+    <div className="rounded-lg border border-gray-200 bg-white p-3">
+        <div className="text-[11px] font-semibold text-gray-600">{label}</div>
+        <div className="mt-1 text-sm font-medium text-gray-900 break-words">{String(value ?? '—')}</div>
+    </div>
+);
 
 export default KanbanBoard;

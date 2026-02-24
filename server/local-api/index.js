@@ -3248,12 +3248,64 @@ const TASK_REVIEW_TRIAGE_INTERVAL_MS = process.env.TASK_REVIEW_TRIAGE_INTERVAL_M
     ? Number(process.env.TASK_REVIEW_TRIAGE_INTERVAL_MS)
     : 15 * 60_000;
 
+const TASK_REVIEW_WATCHDOG_ENABLED = process.env.TASK_REVIEW_WATCHDOG_ENABLED !== 'false';
+const TASK_REVIEW_WATCHDOG_INTERVAL_MS = process.env.TASK_REVIEW_WATCHDOG_INTERVAL_MS
+    ? Number(process.env.TASK_REVIEW_WATCHDOG_INTERVAL_MS)
+    : 60_000;
+const TASK_REVIEW_AUTO_FAIL_MS = process.env.TASK_REVIEW_AUTO_FAIL_MS
+    ? Number(process.env.TASK_REVIEW_AUTO_FAIL_MS)
+    : 6 * 60 * 60_000;
+
 const GATEWAY_KEEPALIVE_ENABLED = process.env.GATEWAY_KEEPALIVE_ENABLED !== 'false';
 const GATEWAY_KEEPALIVE_INTERVAL_MS = process.env.GATEWAY_KEEPALIVE_INTERVAL_MS
     ? Number(process.env.GATEWAY_KEEPALIVE_INTERVAL_MS)
     : 60_000;
 
 let taskWorkerRunning = false;
+
+function reviewReferenceTimeMs(meta) {
+    const m = meta && typeof meta === 'object' ? meta : {};
+    const lastSeenRunAtMs = Number(m?.lastSeenRunAtMs || 0) || 0;
+    const lastDecisionTs = Date.parse(String(m?.lastDecision?.ts || ''));
+    const lastDecisionMs = Number.isFinite(lastDecisionTs) ? lastDecisionTs : 0;
+    const lastRunTs = Number(m?.lastRun?.ts || 0) || 0;
+    const updatedAtMs = coerceTimeMs(m?.updatedAt);
+    return Math.max(lastSeenRunAtMs, lastDecisionMs, lastRunTs, updatedAtMs);
+}
+
+function taskReviewWatchdogTick() {
+    if (!TASK_REVIEW_WATCHDOG_ENABLED) return;
+    const nowMs = Date.now();
+    const nowIso = new Date(nowMs).toISOString();
+
+    const metaMap = readTaskMetaFile();
+    for (const [idRaw, metaRaw] of Object.entries(metaMap || {})) {
+        const id = String(idRaw || '').trim();
+        if (!id) continue;
+        const meta = metaRaw && typeof metaRaw === 'object' ? metaRaw : {};
+        if (meta?.status !== 'review') continue;
+
+        const ref = reviewReferenceTimeMs(meta);
+        if (!ref) continue;
+        if ((nowMs - ref) < Math.max(30_000, TASK_REVIEW_AUTO_FAIL_MS)) continue;
+
+        const err = meta?.error || meta?.lastRun?.error || 'Timed out in review';
+        upsertTaskMeta(id, {
+            ...meta,
+            status: 'failed',
+            completedAt: nowIso,
+            error: String(err).slice(0, 2000),
+            lastDecision: {
+                ts: nowIso,
+                decision: 'failed',
+                reason: `Auto-failed: stuck in review for > ${Math.round(TASK_REVIEW_AUTO_FAIL_MS / 60_000)}m`,
+                editsApplied: []
+            }
+        });
+        appendTaskLog(id, `Auto-failed: stuck in review for > ${Math.round(TASK_REVIEW_AUTO_FAIL_MS / 60_000)}m`);
+        appendTaskNarrative(id, { role: 'system', agentId: meta?.agentId || 'main', text: 'Auto-failed: stuck in review too long' });
+    }
+}
 
 async function taskWorkerTick() {
     if (!TASK_WORKER_ENABLED) return;
@@ -3638,6 +3690,15 @@ if (TASK_WORKER_ENABLED) {
     setTimeout(() => {
         taskWorkerTick().catch(() => { /* ignore */ });
     }, 2500);
+}
+
+if (TASK_REVIEW_WATCHDOG_ENABLED) {
+    setInterval(() => {
+        try { taskReviewWatchdogTick(); } catch { /* ignore */ }
+    }, Math.max(5_000, TASK_REVIEW_WATCHDOG_INTERVAL_MS));
+    setTimeout(() => {
+        try { taskReviewWatchdogTick(); } catch { /* ignore */ }
+    }, 3500);
 }
 
 async function gatewayKeepaliveTick() {
