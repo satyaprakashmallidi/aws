@@ -7,18 +7,20 @@ import CreateAgentModal from './CreateAgentModal';
 const FOCUS_RING = 'focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2';
 
 const AgentSidebar = ({ onAgentClick, selectedAgentId }) => {
-    const { getToken } = useAuth();
+    const { isLoaded, getToken } = useAuth();
     const [agents, setAgents] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
     const [isCreateOpen, setIsCreateOpen] = useState(false);
 
     useEffect(() => {
+        if (!isLoaded) return;
         fetchAgents();
-    }, [getToken]);
+    }, [isLoaded]);
 
     const fetchAgents = async () => {
         try {
+            setError(null);
             const token = await getToken();
             const response = await fetch(apiUrl('/api/agents'), {
                 headers: {
@@ -65,6 +67,22 @@ const AgentSidebar = ({ onAgentClick, selectedAgentId }) => {
                     </button>
                 </div>
             </div>
+
+            {error && (
+                <div className="mx-4 mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                    {error}
+                    <button
+                        type="button"
+                        className={`ml-2 underline ${FOCUS_RING}`}
+                        onClick={() => {
+                            setLoading(true);
+                            fetchAgents();
+                        }}
+                    >
+                        Retry
+                    </button>
+                </div>
+            )}
 
             <div className="flex-1 overflow-y-auto p-2 space-y-2">
                 {agents.map((agent) => (

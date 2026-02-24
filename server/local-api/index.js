@@ -39,6 +39,14 @@ const SOUL_PATHS = [
     path.join(WORKSPACE_DIR, 'memory', 'SOUL.md')
 ];
 
+try {
+    fs.mkdirSync(WORKSPACE_DIR, { recursive: true });
+    fs.mkdirSync(path.join(WORKSPACE_DIR, 'skills'), { recursive: true });
+    fs.mkdirSync(AGENT_WORKSPACES_DIR, { recursive: true });
+} catch {
+    // ignore
+}
+
 const GATEWAY_URL = process.env.OPENCLAW_GATEWAY_URL || 'http://127.0.0.1:18789';
 const GATEWAY_TOKEN = process.env.OPENCLAW_GATEWAY_TOKEN;
 const LOCAL_API_SECRET = process.env.LOCAL_API_SECRET || '';
@@ -885,6 +893,33 @@ function isValidAgentId(agentId) {
     if (!id) return false;
     if (id.length > 64) return false;
     return /^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(id);
+}
+
+function generateAgentId({ prefix = 'agent' } = {}) {
+    const p = String(prefix || 'agent').trim().replace(/[^A-Za-z0-9_-]/g, '').slice(0, 20) || 'agent';
+    const rand = crypto.randomBytes(4).toString('hex');
+    return `${p}-${rand}`;
+}
+
+function agentIdExists(id, config) {
+    if (!id) return false;
+    if (listAgentIdsFromDisk().includes(id)) return true;
+    const list = Array.isArray(config?.agents?.list) ? config.agents.list : [];
+    return list.some((a) => a?.id === id);
+}
+
+function listAgentIdsFromDisk() {
+    try {
+        const agentsDir = path.join(OPENCLAW_DIR, 'agents');
+        if (!fs.existsSync(agentsDir)) return [];
+        const entries = fs.readdirSync(agentsDir, { withFileTypes: true });
+        return entries
+            .filter((e) => e.isDirectory())
+            .map((e) => e.name)
+            .filter((name) => isValidAgentId(name));
+    } catch {
+        return [];
+    }
 }
 
 function normalizeModelConfig(value, fallback = { primary: '', fallbacks: [] }) {
@@ -2615,23 +2650,55 @@ app.get('/api/agents', async (req, res) => {
             });
         }
 
-        const response = await invokeTool('agents_list', {});
-        const details = response?.result?.details || {};
-        const agents = details.agents || response.agents || [];
+        // Prefer disk/config truth for agent IDs, and enrich with tool status when available.
+        let toolAgents = [];
+        let toolMeta = {};
+        try {
+            const response = await invokeTool('agents_list', {});
+            const details = response?.result?.details || {};
+            toolAgents = details.agents || response.agents || [];
+            toolMeta = { requester: details.requester || 'main', allowAny: details.allowAny || false, source: 'gateway' };
+        } catch {
+            toolAgents = [];
+            toolMeta = { requester: 'main', allowAny: false, source: 'disk' };
+        }
 
-        const enriched = agents.map(agent => {
-            const entry = getAgentEntry(config, agent?.id);
-            const modelConfig = normalizeModelConfig(entry?.model, defaultModelConfig);
-            const primary = modelConfig.primary || (typeof agent?.model === 'string' ? agent.model : '') || defaultModelConfig.primary || '';
-            return {
-                ...agent,
-                identity: entry?.identity || { name: agent?.id || 'agent', emoji: '' },
-                model: primary,
-                modelConfig
-            };
-        });
+        const byId = new Map();
+        for (const a of (Array.isArray(toolAgents) ? toolAgents : [])) {
+            const aid = String(a?.id || '').trim();
+            if (!aid) continue;
+            byId.set(aid, a);
+        }
 
-        return res.json({ agents: enriched, requester: details.requester || 'main', allowAny: details.allowAny || false });
+        const ids = new Set();
+        for (const aid of listAgentIdsFromDisk()) ids.add(aid);
+        for (const a of (Array.isArray(config?.agents?.list) ? config.agents.list : [])) {
+            if (a?.id && isValidAgentId(a.id)) ids.add(a.id);
+        }
+        if (byId.size) for (const aid of byId.keys()) ids.add(aid);
+        if (!ids.size) ids.add('main');
+
+        const enriched = Array.from(ids)
+            .sort((a, b) => (a === 'main' ? -1 : 0) - (b === 'main' ? -1 : 0) || a.localeCompare(b))
+            .map((agentId) => {
+                const tool = byId.get(agentId) || {};
+                const entry = getAgentEntry(config, agentId);
+                const modelConfig = normalizeModelConfig(entry?.model, defaultModelConfig);
+                const primary = modelConfig.primary
+                    || (typeof tool?.model === 'string' ? tool.model : '')
+                    || defaultModelConfig.primary
+                    || '';
+                return {
+                    id: agentId,
+                    status: tool?.status || tool?.state || 'Configured',
+                    identity: entry?.identity || { name: agentId, emoji: '' },
+                    model: primary,
+                    modelConfig,
+                    workspace: entry?.workspace || config.agents?.defaults?.workspace || WORKSPACE_DIR
+                };
+            });
+
+        return res.json({ agents: enriched, ...toolMeta });
     } catch (error) {
         return res.status(500).json({ error: error.message });
     }
@@ -2643,31 +2710,58 @@ app.post('/api/agents', async (req, res) => {
 
     try {
         const body = req.body && typeof req.body === 'object' ? req.body : {};
-        const id = String(body.id || '').trim();
-        if (!isValidAgentId(id)) return res.status(400).json({ error: 'Invalid agent id' });
+        // Always generate the agent id server-side.
+        const configPre = readConfigSafe();
 
-        const workspace = body.workspace
-            ? String(body.workspace)
-            : path.join(AGENT_WORKSPACES_DIR, id);
-        fs.mkdirSync(workspace, { recursive: true });
+        let id = '';
+        let workspace = '';
+        let lastCmd = null;
 
-        const { code, stdout, stderr } = await runOpenClaw(
-            ['agents', 'add', id, '--workspace', workspace, '--non-interactive'],
-            { timeoutMs: 90000 }
-        );
-        if (code !== 0) {
+        for (let i = 0; i < 15; i += 1) {
+            const candidate = generateAgentId({ prefix: 'agent' });
+            if (agentIdExists(candidate, configPre)) continue;
+
+            const candidateWorkspace = body.workspace
+                ? String(body.workspace)
+                : path.join(AGENT_WORKSPACES_DIR, candidate);
+            fs.mkdirSync(candidateWorkspace, { recursive: true });
+            fs.mkdirSync(path.join(candidateWorkspace, 'skills'), { recursive: true });
+
+            const { code, stdout, stderr } = await runOpenClaw(
+                ['agents', 'add', candidate, '--workspace', candidateWorkspace, '--non-interactive'],
+                { timeoutMs: 90000 }
+            );
+
+            lastCmd = { code, stdout, stderr, id: candidate, workspace: candidateWorkspace };
+            if (code === 0) {
+                id = candidate;
+                workspace = candidateWorkspace;
+                break;
+            }
+
+            const msg = `${stderr}\n${stdout}`.toLowerCase();
+            if (msg.includes('already') || msg.includes('exists')) continue;
             return res.status(500).json({ error: `Command failed with code ${code}`, stdout: stdout.slice(0, 4000), stderr: stderr.slice(0, 4000) });
+        }
+
+        if (!id) {
+            return res.status(500).json({
+                error: 'Failed to generate a unique agent id',
+                ...(lastCmd ? { stdout: lastCmd.stdout?.slice(0, 4000), stderr: lastCmd.stderr?.slice(0, 4000) } : {})
+            });
         }
 
         const config = readConfigSafe();
         const defaultModelConfig = getDefaultModelConfig(config);
         const entry = upsertAgentEntry(config, id);
+        entry.workspace = workspace;
 
+        entry.identity = entry.identity || {};
         if (body.identity && typeof body.identity === 'object') {
-            entry.identity = entry.identity || {};
             if (body.identity.name !== undefined) entry.identity.name = String(body.identity.name || '');
             if (body.identity.emoji !== undefined) entry.identity.emoji = String(body.identity.emoji || '');
         }
+        if (!String(entry.identity.name || '').trim()) entry.identity.name = id;
 
         if (body.model !== undefined) {
             const normalized = normalizeModelConfig(body.model, defaultModelConfig);

@@ -8,14 +8,14 @@ import { Menu, X } from 'lucide-react';
 
 const Header = () => {
     const location = useLocation();
-    const { getToken } = useAuth();
+    const { isLoaded, getToken } = useAuth();
     const [gatewayStatus, setGatewayStatus] = useState('offline');
     const [agentCount, setAgentCount] = useState(0);
     const [mobileOpen, setMobileOpen] = useState(false);
 
     useEffect(() => {
         fetchGatewayStatus();
-        fetchAgentCount();
+        if (isLoaded) fetchAgentCount();
 
         const healthInterval = setInterval(fetchGatewayStatus, 5000);
         const agentInterval = setInterval(fetchAgentCount, 60_000);
@@ -23,7 +23,7 @@ const Header = () => {
             clearInterval(healthInterval);
             clearInterval(agentInterval);
         };
-    }, []);
+    }, [isLoaded]);
 
     const fetchGatewayStatus = async () => {
         try {

@@ -8,7 +8,7 @@ import { Bot, RefreshCw, Send, User, Loader2 } from 'lucide-react';
 const FOCUS_RING = 'focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2';
 
 const Broadcast = () => {
-    const { getToken } = useAuth();
+    const { isLoaded, getToken } = useAuth();
     const [agents, setAgents] = useState([]);
     const [selectedAgents, setSelectedAgents] = useState([]);
     const [message, setMessage] = useState('');
@@ -32,8 +32,9 @@ const Broadcast = () => {
     };
 
     useEffect(() => {
+        if (!isLoaded) return;
         fetchAgents();
-    }, []);
+    }, [isLoaded]);
 
     useEffect(() => {
         fetchRecent();

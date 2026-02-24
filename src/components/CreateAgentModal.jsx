@@ -14,7 +14,6 @@ const CreateAgentModal = ({ isOpen, onClose, onCreated }) => {
     const [error, setError] = useState(null);
 
     const [formData, setFormData] = useState({
-        id: '',
         identityName: '',
         identityEmoji: '',
         modelPrimary: '',
@@ -57,7 +56,6 @@ const CreateAgentModal = ({ isOpen, onClose, onCreated }) => {
         try {
             const token = await getToken();
             const body = {
-                id: formData.id,
                 identity: {
                     name: formData.identityName,
                     emoji: formData.identityEmoji
@@ -83,7 +81,6 @@ const CreateAgentModal = ({ isOpen, onClose, onCreated }) => {
             onCreated?.(data);
             onClose();
             setFormData({
-                id: '',
                 identityName: '',
                 identityEmoji: '',
                 modelPrimary: '',
@@ -119,22 +116,8 @@ const CreateAgentModal = ({ isOpen, onClose, onCreated }) => {
                         </div>
                     )}
 
-                    <div>
-                        <label htmlFor="agent-id" className="block text-sm font-medium text-gray-700 mb-1">
-                            Agent ID
-                        </label>
-                        <input
-                            id="agent-id"
-                            name="id"
-                            type="text"
-                            value={formData.id}
-                            onChange={(e) => setFormData({ ...formData, id: e.target.value })}
-                            required
-                            autoComplete="off"
-                            className={`w-full rounded-lg border border-gray-300 px-3 py-2 shadow-sm transition-colors ${FOCUS_RING}`}
-                            placeholder="e.g. Hai"
-                        />
-                        <p className="mt-1 text-xs text-gray-500">Letters, numbers, _ and - only.</p>
+                    <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700">
+                        Agent ID will be generated automatically.
                     </div>
 
                     <div className="grid grid-cols-2 gap-4">
@@ -155,7 +138,7 @@ const CreateAgentModal = ({ isOpen, onClose, onCreated }) => {
                         </div>
                         <div>
                             <label htmlFor="create-agent-emoji" className="block text-sm font-medium text-gray-700 mb-1">
-                                Emoji Avatar
+                                Emoji Avatar <span className="text-gray-500 font-normal">(optional)</span>
                             </label>
                             <input
                                 id="create-agent-emoji"
