@@ -8,28 +8,41 @@ import { Menu, X } from 'lucide-react';
 const Header = () => {
     const location = useLocation();
     const [gatewayStatus, setGatewayStatus] = useState('offline');
-    const [activeAgentCount, setActiveAgentCount] = useState(0);
+    const [agentCount, setAgentCount] = useState(0);
     const [mobileOpen, setMobileOpen] = useState(false);
 
     useEffect(() => {
-        fetchStatus();
-        const interval = setInterval(fetchStatus, 5000); // Update every 5s
-        return () => clearInterval(interval);
+        fetchGatewayStatus();
+        fetchAgentCount();
+
+        const healthInterval = setInterval(fetchGatewayStatus, 5000);
+        const agentInterval = setInterval(fetchAgentCount, 60_000);
+        return () => {
+            clearInterval(healthInterval);
+            clearInterval(agentInterval);
+        };
     }, []);
 
-    const fetchStatus = async () => {
+    const fetchGatewayStatus = async () => {
         try {
             // Get gateway health
             const healthData = await health.check();
             setGatewayStatus(healthData?.status === 'online' ? 'online' : 'offline');
-
-            // Get active agent count
-            const response = await fetch(apiUrl(`/api/agents?action=status&t=${Date.now()}`));
-            const data = await response.json();
-            setActiveAgentCount(data.activeCount || 0);
         } catch (error) {
             console.error('Failed to fetch status:', error);
             setGatewayStatus('offline');
+        }
+    };
+
+    const fetchAgentCount = async () => {
+        try {
+            const response = await fetch(apiUrl(`/api/agents?t=${Date.now()}`));
+            if (!response.ok) return;
+            const data = await response.json().catch(() => null);
+            const count = Array.isArray(data?.agents) ? data.agents.length : 0;
+            setAgentCount(count);
+        } catch {
+            // ignore
         }
     };
 
@@ -63,7 +76,7 @@ const Header = () => {
 
                         <div className="hidden rounded-lg bg-blue-600/90 px-3 py-1 sm:block">
                             <span className="text-sm font-semibold tabular-nums">
-                                {activeAgentCount} Active Agent{activeAgentCount !== 1 ? 's' : ''}
+                                {agentCount} Agent{agentCount !== 1 ? 's' : ''}
                             </span>
                         </div>
                     </div>
@@ -121,7 +134,7 @@ const Header = () => {
                                 </span>
                             </div>
                             <span className="text-sm font-semibold tabular-nums text-white/90">
-                                {activeAgentCount}
+                                {agentCount}
                             </span>
                         </div>
 

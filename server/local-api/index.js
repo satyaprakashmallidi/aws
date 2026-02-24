@@ -3265,7 +3265,7 @@ const TASK_REVIEW_WATCHDOG_INTERVAL_MS = process.env.TASK_REVIEW_WATCHDOG_INTERV
     : 60_000;
 const TASK_REVIEW_AUTO_FAIL_MS = process.env.TASK_REVIEW_AUTO_FAIL_MS
     ? Number(process.env.TASK_REVIEW_AUTO_FAIL_MS)
-    : 6 * 60 * 60_000;
+    : 2 * 60 * 60_000;
 
 const GATEWAY_KEEPALIVE_ENABLED = process.env.GATEWAY_KEEPALIVE_ENABLED !== 'false';
 const GATEWAY_KEEPALIVE_INTERVAL_MS = process.env.GATEWAY_KEEPALIVE_INTERVAL_MS
@@ -3320,7 +3320,6 @@ function taskReviewWatchdogTick() {
 
 async function taskWorkerTick() {
     if (!TASK_WORKER_ENABLED) return;
-    if (chatInFlight > 0) return;
     if (taskWorkerRunning) return;
     taskWorkerRunning = true;
     let scheduleSoon = false;
