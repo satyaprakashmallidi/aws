@@ -800,9 +800,11 @@ function newSessionId() {
 const allowedOrigins = [
     'https://openclaw-frontend.vercel.app',
     'https://automation-1.magicteams.ai',
+    'http://127.0.0.1:4444',
+    'http://localhost:4444',
+    'https://openclaw-api.magicteams.ai',
     'https://openclaw.ai',
-    'https://app.openclaw.ai',
-    'https://api.magicteams.ai'
+    'https://app.openclaw.ai'
 ];
 
 app.use(cors({
@@ -3983,7 +3985,7 @@ if (GATEWAY_KEEPALIVE_ENABLED) {
     }, 2000);
 }
 
-const PORT = process.env.LOCAL_API_PORT ? Number(process.env.LOCAL_API_PORT) : 3333;
+const PORT = process.env.LOCAL_API_PORT ? Number(process.env.LOCAL_API_PORT) : 4444;
 app.listen(PORT, '127.0.0.1', () => {
     console.log(`OpenClaw local API running on http://127.0.0.1:${PORT}`);
 });

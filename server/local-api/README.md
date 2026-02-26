@@ -27,7 +27,7 @@ Runs a lightweight API on your Ubuntu VPS that reads local OpenClaw files and pr
    Environment=OPENCLAW_DIR=/home/ubuntu/.openclaw
    Environment=OPENCLAW_CONFIG_PATH=/home/ubuntu/.openclaw/openclaw.json
    Environment=OPENCLAW_WORKSPACE=/home/ubuntu/.openclaw/workspace
-   Environment=LOCAL_API_PORT=3333
+   Environment=LOCAL_API_PORT=4444
 
    [Install]
    WantedBy=default.target
@@ -42,10 +42,10 @@ Runs a lightweight API on your Ubuntu VPS that reads local OpenClaw files and pr
    ```
 
 4. Expose via Cloudflare Tunnel or reverse proxy:
-   - Example: map `https://api.magicteams.ai` to `http://127.0.0.1:3333`
+   - Example: map `https://openclaw-api.magicteams.ai` to `http://127.0.0.1:4444`
 
 5. Update Vercel env:
-   - `VITE_API_BASE=https://api.magicteams.ai`
+   - `VITE_API_BASE=https://openclaw-api.magicteams.ai`
 
 ## Endpoints used by the web app
 
