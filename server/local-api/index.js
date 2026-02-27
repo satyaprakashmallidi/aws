@@ -1378,11 +1378,16 @@ async function cronCliRuns({ jobId, limit = 50 } = {}) {
     }
 
     // CLI fallback
-    const args = ['cron', 'runs', '--limit', String(max)];
-    if (id) args.push('--id', id);
-    const parsed = await runOpenClawJson(args, { timeoutMs: 6000 });
-    const entries = Array.isArray(parsed?.entries) ? parsed.entries : [];
-    return entries.slice(0, max);
+    try {
+        const args = ['cron', 'runs', '--limit', String(max)];
+        if (id) args.push('--id', id);
+        const parsed = await runOpenClawJson(args, { timeoutMs: 6000 });
+        const entries = Array.isArray(parsed?.entries) ? parsed.entries : [];
+        return entries.slice(0, max);
+    } catch {
+        // `openclaw cron runs` may not exist in this version — return empty
+        return [];
+    }
 }
 
 function sleep(ms) {
