@@ -1,0 +1,15 @@
+{
+  "name": "openclaw-host-kit",
+  "version": "0.0.0",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "smoke:provision-script": "tsx ./scripts/smoke-provision-script.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.15",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  }
+}
