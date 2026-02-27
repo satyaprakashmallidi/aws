@@ -93,6 +93,78 @@ CREATE TRIGGER update_sessions_updated_at
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
+-- ─────────────────────────────────────────────────────────────────────────
+-- Existing tables (sessions, messages, user_profiles) remain unchanged above
+-- ─────────────────────────────────────────────────────────────────────────
+
+-- VPS nodes fleet table
+create table if not exists public.vps_nodes (
+  id            uuid primary key default gen_random_uuid(),
+  contabo_id    bigint unique,                      -- Contabo's numeric instanceId (null if manually added)
+  ip_address    text not null,
+  host_shard    text not null,                      -- e.g. "h1", "h2"
+  base_domain   text not null,                      -- e.g. "magicteams.ai"
+  ttyd_secret   text not null,                      -- per-VPS HMAC secret for terminal tokens
+  capacity_max  integer not null default 6,
+  capacity_used integer not null default 0,
+  status        text not null default 'provisioning',
+  -- status: provisioning | ready | full | decommissioned
+  created_at    timestamptz default now(),
+  constraint vps_nodes_shard_domain_unique unique (host_shard, base_domain)
+) tablespace pg_default;
+
+-- Augment user_profiles for multi-node support
+alter table public.user_profiles
+  add column if not exists vps_node_id    uuid references public.vps_nodes(id),
+  add column if not exists instance_url   text,       -- https://openclaw-<id>.h1.openclaw.<domain>/
+  add column if not exists terminal_url   text,       -- .../terminal?token=...
+  add column if not exists provisioned_at timestamptz;
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- Atomic slot claim using SELECT FOR UPDATE SKIP LOCKED
+-- Called by provisioner.js → supabase.rpc('claim_vps_slot')
+-- Returns the claimed vps_nodes row, or NULL if no capacity
+-- ─────────────────────────────────────────────────────────────────────────
+create or replace function public.claim_vps_slot()
+returns setof public.vps_nodes
+language plpgsql
+as $$
+declare
+  _node public.vps_nodes;
+begin
+  -- Lock the best available node (most used first = fill before opening new)
+  select * into _node
+  from public.vps_nodes
+  where status = 'ready'
+    and capacity_used < capacity_max
+  order by capacity_used desc
+  limit 1
+  for update skip locked;
+
+  if not found then
+    return;  -- returns empty set → provisioner knows to spin up a new VPS
+  end if;
+
+  -- Increment and mark full if at capacity
+  update public.vps_nodes
+  set
+    capacity_used = capacity_used + 1,
+    status = case
+      when capacity_used + 1 >= capacity_max then 'full'
+      else status
+    end
+  where id = _node.id
+  returning * into _node;
+
+  return next _node;
+end;
+$$;
+
+-- RLS: vps_nodes is admin-only (service role), users cannot read it
+alter table public.vps_nodes enable row level security;
+
+-- No policies = only service_role can access (RLS blocks anon/authenticated by default)
+
 -- =============================================
 -- SAMPLE DATA (Optional - for testing)
 -- =============================================

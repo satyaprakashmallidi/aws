@@ -4063,6 +4063,53 @@ if (GATEWAY_KEEPALIVE_ENABLED) {
     }, 2000);
 }
 
+
+app.post('/api/internal/create-instance', async (req, res) => {
+    const internalSecret = process.env.OPENCLAW_INTERNAL_SECRET || '';
+    if (!internalSecret || req.headers['x-internal-secret'] !== internalSecret) {
+        return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    const { instanceId } = req.body;
+    if (!instanceId || typeof instanceId !== 'string' || !/^[a-zA-Z0-9_-]{1,64}$/.test(instanceId)) {
+        return res.status(400).json({ error: 'Invalid instanceId' });
+    }
+
+    const hostKitDir = process.env.OPENCLAW_HOST_KIT_DIR
+        || path.join(path.dirname(new URL(import.meta.url).pathname), '../../openclaw-host-kit');
+    const scriptPath = path.join(hostKitDir, 'scripts', 'create-instance.sh');
+
+    if (!fs.existsSync(scriptPath)) {
+        return res.status(500).json({ error: `create-instance.sh not found at ${scriptPath}` });
+    }
+
+    try {
+        const output = await new Promise((resolve, reject) => {
+            execFile('bash', [scriptPath, instanceId], {
+                cwd: hostKitDir,
+                timeout: 90_000,
+                env: { ...process.env },
+            }, (err, stdout, stderr) => {
+                if (err) return reject(new Error(`create-instance.sh: ${stderr || err.message}`));
+                resolve(stdout);
+            });
+        });
+
+        const configPath = path.join(`/var/lib/openclaw/instances/${instanceId}`, 'openclaw.json');
+        let gatewayToken = null;
+        try {
+            if (fs.existsSync(configPath)) {
+                gatewayToken = JSON.parse(fs.readFileSync(configPath, 'utf8'))?.gateway?.auth?.token || null;
+            }
+        } catch { /* not yet written */ }
+
+        return res.json({ ok: true, instanceId, containerName: `openclaw-${instanceId}`, gatewayToken, output: output.trim() });
+    } catch (err) {
+        console.error('[internal] create-instance:', err);
+        return res.status(500).json({ error: err.message });
+    }
+});
+
 const PORT = process.env.LOCAL_API_PORT ? Number(process.env.LOCAL_API_PORT) : 4444;
 app.listen(PORT, '127.0.0.1', () => {
     console.log(`OpenClaw local API running on http://127.0.0.1:${PORT}`);
