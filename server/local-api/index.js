@@ -1867,6 +1867,80 @@ app.get('/api/health', async (req, res) => {
     }
 });
 
+// ── Sub-agents ────────────────────────────────────────────────────────────────
+
+app.get('/api/subagents', async (req, res) => {
+    try {
+        const params = JSON.stringify({
+            kinds: ['node'],
+            limit: 100
+        });
+        const { code, stdout, stderr } = await runOpenClaw(
+            ['gateway', 'call', 'sessions.list', '--params', params],
+            { timeoutMs: 15000 }
+        );
+        if (code !== 0) {
+            return res.status(500).json({ error: 'Failed to list sub-agents', stderr: stderr?.slice(0, 500) });
+        }
+        const parsed = parseToolOutputJson(stdout, stderr);
+        const sessions = Array.isArray(parsed) ? parsed
+            : Array.isArray(parsed?.sessions) ? parsed.sessions
+                : [];
+        // Filter out main sessions, keep only subagent-keyed sessions
+        const subagents = sessions.filter(s => {
+            const key = String(s?.key || '');
+            return key.includes(':subagent:');
+        }).map(s => ({
+            sessionKey: s.key,
+            sessionId: s.sessionId,
+            label: s.label || s.displayName || s.key?.split(':').pop() || 'Sub-Agent',
+            model: s.model || '',
+            updatedAt: s.updatedAt || null,
+            channel: s.channel || 'internal',
+            kind: s.kind || 'node'
+        }));
+        return res.json({ subagents });
+    } catch (error) {
+        return res.status(500).json({ error: error.message });
+    }
+});
+
+app.post('/api/subagents/spawn', async (req, res) => {
+    const { label, task, model, agentId = 'main' } = req.body || {};
+    if (!task || typeof task !== 'string' || !task.trim()) {
+        return res.status(400).json({ error: 'task is required' });
+    }
+    try {
+        const params = {
+            task: task.trim(),
+            agentId: String(agentId || 'main')
+        };
+        if (label && typeof label === 'string' && label.trim()) {
+            params.label = label.trim();
+        }
+        if (model && typeof model === 'string' && model.trim()) {
+            params.model = model.trim();
+        }
+        const { code, stdout, stderr } = await runOpenClaw(
+            ['gateway', 'call', 'sessions.spawn', '--params', JSON.stringify(params)],
+            { timeoutMs: 20000 }
+        );
+        if (code !== 0) {
+            return res.status(500).json({ error: 'Failed to spawn sub-agent', stderr: stderr?.slice(0, 500) });
+        }
+        const parsed = parseToolOutputJson(stdout, stderr);
+        return res.json({
+            ok: true,
+            status: parsed?.status || 'accepted',
+            runId: parsed?.runId || null,
+            childSessionKey: parsed?.childSessionKey || null,
+            raw: parsed
+        });
+    } catch (error) {
+        return res.status(500).json({ error: error.message });
+    }
+});
+
 app.post('/api/user/profile/sync', async (req, res) => {
     const userId = await requireClerkUserId(req, res);
     if (!userId) return;

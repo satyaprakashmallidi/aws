@@ -1,47 +1,51 @@
-import React, { useState, useEffect } from 'react';
-import { useAuth } from '@clerk/clerk-react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { apiUrl } from '../lib/apiBase';
-import { Settings, Circle, Cpu, Users, Plus } from 'lucide-react';
-import CreateAgentModal from './CreateAgentModal';
+import { Settings, Circle, Cpu, Zap, Plus, RefreshCw, Clock } from 'lucide-react';
+import SpawnSubAgentModal from './CreateAgentModal';
 
-const FOCUS_RING = 'focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2';
+const FOCUS_RING = 'focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-2';
+
+function timeAgo(ms) {
+    if (!ms) return '';
+    const diff = Date.now() - ms;
+    if (diff < 60000) return 'just now';
+    if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
+    if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
+    return `${Math.floor(diff / 86400000)}d ago`;
+}
 
 const AgentSidebar = ({ onAgentClick, selectedAgentId }) => {
-    const { isLoaded, getToken } = useAuth();
-    const [agents, setAgents] = useState([]);
+    const [subagents, setSubagents] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
-    const [isCreateOpen, setIsCreateOpen] = useState(false);
+    const [isSpawnOpen, setIsSpawnOpen] = useState(false);
 
-    useEffect(() => {
-        if (!isLoaded) return;
-        fetchAgents();
-    }, [isLoaded]);
-
-    const fetchAgents = async () => {
+    const fetchSubAgents = useCallback(async () => {
         try {
             setError(null);
-            const token = await getToken();
-            const response = await fetch(apiUrl('/api/agents'), {
-                headers: {
-                    ...(token ? { Authorization: `Bearer ${token}` } : {})
-                }
-            });
-            if (!response.ok) throw new Error('Failed to fetch agents');
+            const response = await fetch(apiUrl('/api/subagents'));
+            if (!response.ok) throw new Error('Failed to fetch sub-agents');
             const data = await response.json();
-            setAgents(data.agents || []);
+            setSubagents(data.subagents || []);
         } catch (err) {
             console.error(err);
             setError(err.message);
         } finally {
             setLoading(false);
         }
-    };
+    }, []);
+
+    useEffect(() => {
+        fetchSubAgents();
+        // Poll every 15s to pick up newly spawned agents
+        const interval = setInterval(fetchSubAgents, 15000);
+        return () => clearInterval(interval);
+    }, [fetchSubAgents]);
 
     if (loading) {
         return (
             <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm flex items-center justify-center">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-violet-600"></div>
             </div>
         );
     }
@@ -50,18 +54,26 @@ const AgentSidebar = ({ onAgentClick, selectedAgentId }) => {
         <div className="h-full rounded-xl border border-slate-200 bg-white shadow-sm flex flex-col overflow-hidden lg:sticky lg:top-6 lg:max-h-full">
             <div className="p-4 border-b border-gray-100 flex justify-between items-center">
                 <h2 className="text-lg font-bold text-gray-800 flex items-center gap-2">
-                    <Users className="w-5 h-5 text-blue-600" aria-hidden="true" />
-                    Agents
+                    <Zap className="w-5 h-5 text-violet-600" aria-hidden="true" />
+                    Sub-Agents
                 </h2>
                 <div className="flex items-center gap-2">
-                    <span className="bg-blue-100 text-blue-800 text-xs font-medium px-2.5 py-0.5 rounded-full">
-                        {agents.length}
+                    <span className="bg-violet-100 text-violet-800 text-xs font-medium px-2.5 py-0.5 rounded-full">
+                        {subagents.length}
                     </span>
                     <button
                         type="button"
-                        onClick={() => setIsCreateOpen(true)}
-                        aria-label="Create agent"
-                        className={`rounded-md p-1.5 text-gray-500 transition-colors hover:bg-blue-100 hover:text-blue-700 ${FOCUS_RING}`}
+                        onClick={() => { setLoading(true); fetchSubAgents(); }}
+                        aria-label="Refresh sub-agents"
+                        className={`rounded-md p-1.5 text-gray-500 transition-colors hover:bg-violet-100 hover:text-violet-700 ${FOCUS_RING}`}
+                    >
+                        <RefreshCw className="w-4 h-4" aria-hidden="true" />
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => setIsSpawnOpen(true)}
+                        aria-label="Spawn sub-agent"
+                        className={`rounded-md p-1.5 text-gray-500 transition-colors hover:bg-violet-100 hover:text-violet-700 ${FOCUS_RING}`}
                     >
                         <Plus className="w-4 h-4" aria-hidden="true" />
                     </button>
@@ -74,10 +86,7 @@ const AgentSidebar = ({ onAgentClick, selectedAgentId }) => {
                     <button
                         type="button"
                         className={`ml-2 underline ${FOCUS_RING}`}
-                        onClick={() => {
-                            setLoading(true);
-                            fetchAgents();
-                        }}
+                        onClick={() => { setLoading(true); fetchSubAgents(); }}
                     >
                         Retry
                     </button>
@@ -85,72 +94,73 @@ const AgentSidebar = ({ onAgentClick, selectedAgentId }) => {
             )}
 
             <div className="flex-1 overflow-y-auto p-2 space-y-2">
-                {agents.map((agent) => (
+                {subagents.map((agent) => (
                     <div
-                        key={agent.id}
-                        className={`group p-3 rounded-lg border transition-colors transition-shadow hover:shadow-md ${selectedAgentId === agent.id
-                                ? 'border-blue-500 bg-blue-50'
-                                : 'border-gray-200 hover:border-blue-300'
+                        key={agent.sessionKey}
+                        className={`group p-3 rounded-lg border transition-all hover:shadow-md ${selectedAgentId === agent.sessionKey
+                                ? 'border-violet-500 bg-violet-50'
+                                : 'border-gray-200 hover:border-violet-300'
                             }`}
                     >
                         <div className="flex justify-between items-start mb-2">
                             <div className="flex items-center gap-2">
-                                <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white font-bold text-sm">
-                                    {agent.identity?.emoji || agent.id[0].toUpperCase()}
+                                <div className="w-8 h-8 rounded-full bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center text-white font-bold text-sm">
+                                    {(agent.label?.[0] || 'S').toUpperCase()}
                                 </div>
                                 <div>
-                                    <h3 className="font-semibold text-gray-800 text-sm">{agent.identity?.name || agent.id}</h3>
+                                    <h3 className="font-semibold text-gray-800 text-sm">{agent.label}</h3>
                                     <div className="flex items-center gap-1">
                                         <Circle className="w-2 h-2 text-green-500 fill-green-500" aria-hidden="true" />
-                                        <span className="text-xs text-gray-500">{agent.status || 'Active'}</span>
+                                        <span className="text-xs text-gray-500">Active</span>
                                     </div>
                                 </div>
                             </div>
 
-                            <button
-                                type="button"
-                                onClick={(e) => {
-                                    e.stopPropagation();
-                                    onAgentClick(agent);
-                                }}
-                                aria-label={`Edit agent ${agent.identity?.name || agent.id}`}
-                                className={`rounded-md p-1.5 text-gray-500 transition-colors hover:bg-blue-100 hover:text-blue-700 ${FOCUS_RING}`}
-                            >
-                                <Settings className="w-4 h-4" aria-hidden="true" />
-                            </button>
+                            {onAgentClick && (
+                                <button
+                                    type="button"
+                                    onClick={(e) => { e.stopPropagation(); onAgentClick(agent); }}
+                                    aria-label={`View sub-agent ${agent.label}`}
+                                    className={`rounded-md p-1.5 text-gray-500 transition-colors hover:bg-violet-100 hover:text-violet-700 ${FOCUS_RING}`}
+                                >
+                                    <Settings className="w-4 h-4" aria-hidden="true" />
+                                </button>
+                            )}
                         </div>
 
-                        {agent.description && (
-                            <p className="text-xs text-gray-600 line-clamp-2 mb-2">
-                                {agent.description}
-                            </p>
-                        )}
-
-                        <div className="flex items-center gap-1.5 bg-gray-100 px-2 py-1 rounded text-xs text-gray-600 w-fit">
-                            <Cpu className="w-3 h-3" aria-hidden="true" />
-                            <span className="truncate max-w-[120px]">
-                                {agent.model}
-                                {Array.isArray(agent.modelConfig?.fallbacks) && agent.modelConfig.fallbacks.length > 0
-                                    ? ` (+${agent.modelConfig.fallbacks.length})`
-                                    : ''}
-                            </span>
+                        <div className="flex items-center justify-between gap-2 mt-1">
+                            {agent.model && (
+                                <div className="flex items-center gap-1.5 bg-gray-100 px-2 py-1 rounded text-xs text-gray-600 w-fit">
+                                    <Cpu className="w-3 h-3" aria-hidden="true" />
+                                    <span className="truncate max-w-[120px]">{agent.model}</span>
+                                </div>
+                            )}
+                            {agent.updatedAt && (
+                                <div className="flex items-center gap-1 text-xs text-gray-400 ml-auto">
+                                    <Clock className="w-3 h-3" />
+                                    <span>{timeAgo(agent.updatedAt)}</span>
+                                </div>
+                            )}
                         </div>
                     </div>
                 ))}
 
-                {agents.length === 0 && (
-                    <div className="text-center py-8 text-gray-500 text-sm">
-                        No agents found
+                {subagents.length === 0 && (
+                    <div className="text-center py-10 text-gray-400 text-sm">
+                        <Zap className="w-8 h-8 mx-auto mb-2 opacity-30" />
+                        <p className="font-medium text-gray-500">No sub-agents running</p>
+                        <p className="text-xs mt-1">Click <strong>+</strong> to spawn one</p>
                     </div>
                 )}
             </div>
 
-            <CreateAgentModal
-                isOpen={isCreateOpen}
-                onClose={() => setIsCreateOpen(false)}
+            <SpawnSubAgentModal
+                isOpen={isSpawnOpen}
+                onClose={() => setIsSpawnOpen(false)}
                 onCreated={() => {
+                    setIsSpawnOpen(false);
                     setLoading(true);
-                    fetchAgents();
+                    fetchSubAgents();
                 }}
             />
         </div>
