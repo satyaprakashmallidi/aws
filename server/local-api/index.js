@@ -1295,6 +1295,10 @@ const DEFAULT_TASK_SYSTEM_PROMPT =
     'Execute the requested action directly using your available tools. Do not describe your plan.';
 
 async function cronCliAdd({ agentId, name, message, sessionTarget = 'isolated', atIso = defaultTaskAtIso(), disabled = true, deliverTo = null, channel = null, systemPrompt = null } = {}) {
+    // Prepend mandatory execution instruction into the message itself (--system flag is not supported)
+    const system = systemPrompt || DEFAULT_TASK_SYSTEM_PROMPT;
+    const fullMessage = `[SYSTEM]: ${system}\n\n[TASK]: ${String(message || '')}`;
+
     const args = [
         'cron',
         'add',
@@ -1305,12 +1309,10 @@ async function cronCliAdd({ agentId, name, message, sessionTarget = 'isolated', 
         '--agent',
         String(agentId || 'main'),
         '--message',
-        String(message || ''),
+        fullMessage,
         '--at',
         String(atIso),
         '--keep-after-run',
-        '--system',
-        String(systemPrompt || DEFAULT_TASK_SYSTEM_PROMPT),
         '--json'
     ];
     // If a delivery target is specified, route results there; otherwise suppress delivery.
