@@ -16,7 +16,7 @@ app.use(express.json());
 app.use((req, res, next) => {
     res.setHeader('Access-Control-Allow-Origin', process.env.ALLOWED_ORIGIN || 'http://localhost:5173');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Internal-Secret');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
     if (req.method === 'OPTIONS') return res.sendStatus(204);
     next();
 });
@@ -38,6 +38,48 @@ app.post('/api/provision/user', requireInternal, async (req, res) => {
     try {
         return res.json(await provisionUser(userId, username || userId));
     } catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
+
+app.delete('/api/provision/user/:userId', requireInternal, async (req, res) => {
+    const { userId } = req.params;
+    if (!userId) return res.status(400).json({ error: 'userId required' });
+
+    try {
+        const { data: profile } = await supabase
+            .from('user_profiles')
+            .select('vps_node_id, docker_container_name')
+            .eq('userid', userId)
+            .maybeSingle();
+
+        if (profile?.vps_node_id) {
+            const { data: node } = await supabase
+                .from('vps_nodes')
+                .select('id, capacity_used, contabo_id')
+                .eq('id', profile.vps_node_id)
+                .single();
+
+            if (node) {
+                const newUsed = Math.max(0, (node.capacity_used || 1) - 1);
+                await supabase.from('vps_nodes').update({
+                    capacity_used: newUsed,
+                    status: newUsed === 0 ? 'ready' : 'ready',
+                }).eq('id', node.id);
+            }
+        }
+
+        await supabase.from('user_profiles').update({
+            operation_status: 'suspended',
+            vps_node_id: null,
+            docker_container_name: null,
+            instance_url: null,
+            terminal_url: null,
+        }).eq('userid', userId);
+
+        return res.json({ ok: true, userId });
+    } catch (err) {
+        console.error('[cancel] error:', err);
         return res.status(500).json({ error: err.message });
     }
 });

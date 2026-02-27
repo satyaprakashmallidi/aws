@@ -1968,6 +1968,16 @@ app.post('/api/user/profile/sync', async (req, res) => {
             .single();
 
         if (error) return res.status(500).json({ error: error.message });
+
+        if (data.operation_status === 'onboarded') {
+            const controlPlaneUrl = process.env.OPENCLAW_CONTROL_PLANE_URL || 'http://localhost:4445';
+            fetch(`${controlPlaneUrl}/api/provision/user`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-Internal-Secret': process.env.OPENCLAW_INTERNAL_SECRET || '' },
+                body: JSON.stringify({ userId, username: normalizedUsername }),
+            }).catch((err) => console.error('[profile/sync] provision trigger failed:', err));
+        }
+
         return res.json({ profile: data });
     } catch (error) {
         return res.status(500).json({ error: error?.message || 'Failed to sync profile' });

@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from 'react';
-import { Outlet } from 'react-router-dom';
+import { Outlet, useNavigate } from 'react-router-dom';
 import { useAuth, useUser } from '@clerk/clerk-react';
 import Header from './Header';
 import { apiUrl } from '../lib/apiBase';
@@ -7,6 +7,7 @@ import { apiUrl } from '../lib/apiBase';
 const Layout = () => {
     const { isLoaded, isSignedIn, user } = useUser();
     const { getToken } = useAuth();
+    const navigate = useNavigate();
     const didSyncRef = useRef(false);
 
     useEffect(() => {
@@ -36,13 +37,18 @@ const Layout = () => {
                 const text = await res.text().catch(() => '');
                 throw new Error(`Failed to sync profile: ${res.status} ${text}`);
             }
+
+            const { profile } = await res.json();
+            if (profile && profile.operation_status !== 'ready') {
+                navigate('/provisioning', { replace: true });
+            }
         };
 
         didSyncRef.current = true;
         run().catch((err) => {
             console.error(err);
         });
-    }, [getToken, isLoaded, isSignedIn, user]);
+    }, [getToken, isLoaded, isSignedIn, navigate, user]);
 
     return (
         <div className="flex h-dvh flex-col overflow-hidden bg-slate-50 text-slate-900">

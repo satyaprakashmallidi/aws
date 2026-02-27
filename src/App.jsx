@@ -10,6 +10,7 @@ import Landing from './pages/Landing';
 import SignInPage from './pages/SignIn';
 import SignUpPage from './pages/SignUp';
 import SsoCallback from './pages/SsoCallback';
+import Provisioning from './pages/Provisioning';
 import './index.css';
 
 function App() {
@@ -29,6 +30,7 @@ function App() {
                     element={<SignUpPage />}
                 />
                 <Route path="/sso-callback" element={<SsoCallback />} />
+                <Route path="/provisioning" element={<Provisioning />} />
 
                 {/* Protected Routes */}
                 <Route
