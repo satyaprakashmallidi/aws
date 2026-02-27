@@ -1872,8 +1872,7 @@ app.get('/api/health', async (req, res) => {
 app.get('/api/subagents', async (req, res) => {
     try {
         const params = JSON.stringify({
-            kinds: ['node'],
-            limit: 100
+            limit: 200
         });
         const { code, stdout, stderr } = await runOpenClaw(
             ['gateway', 'call', 'sessions.list', '--params', params],
