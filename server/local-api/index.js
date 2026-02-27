@@ -1289,7 +1289,12 @@ async function cronCliList() {
     return Array.isArray(parsed?.jobs) ? parsed.jobs : [];
 }
 
-async function cronCliAdd({ agentId, name, message, sessionTarget = 'isolated', atIso = defaultTaskAtIso(), disabled = true, deliverTo = null, channel = null } = {}) {
+const DEFAULT_TASK_SYSTEM_PROMPT =
+    'You are a task executor. When asked to perform any action, you MUST use the appropriate tool immediately. ' +
+    'Never say "I will", "I would", or "I have scheduled" — just call the tool and DO it right now. ' +
+    'Execute the requested action directly using your available tools. Do not describe your plan.';
+
+async function cronCliAdd({ agentId, name, message, sessionTarget = 'isolated', atIso = defaultTaskAtIso(), disabled = true, deliverTo = null, channel = null, systemPrompt = null } = {}) {
     const args = [
         'cron',
         'add',
@@ -1304,6 +1309,8 @@ async function cronCliAdd({ agentId, name, message, sessionTarget = 'isolated', 
         '--at',
         String(atIso),
         '--keep-after-run',
+        '--system',
+        String(systemPrompt || DEFAULT_TASK_SYSTEM_PROMPT),
         '--json'
     ];
     // If a delivery target is specified, route results there; otherwise suppress delivery.
