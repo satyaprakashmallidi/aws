@@ -1289,7 +1289,7 @@ async function cronCliList() {
     return Array.isArray(parsed?.jobs) ? parsed.jobs : [];
 }
 
-async function cronCliAdd({ agentId, name, message, sessionTarget = 'isolated', atIso = defaultTaskAtIso(), disabled = true } = {}) {
+async function cronCliAdd({ agentId, name, message, sessionTarget = 'isolated', atIso = defaultTaskAtIso(), disabled = true, deliverTo = null, channel = null } = {}) {
     const args = [
         'cron',
         'add',
@@ -1304,9 +1304,18 @@ async function cronCliAdd({ agentId, name, message, sessionTarget = 'isolated', 
         '--at',
         String(atIso),
         '--keep-after-run',
-        '--no-deliver',
         '--json'
     ];
+    // If a delivery target is specified, route results there; otherwise suppress delivery.
+    if (deliverTo && typeof deliverTo === 'string' && deliverTo.trim()) {
+        args.push('--to', deliverTo.trim());
+        if (channel && typeof channel === 'string' && channel.trim()) {
+            args.push('--channel', channel.trim());
+        }
+        args.push('--announce');
+    } else {
+        args.push('--no-deliver');
+    }
     if (disabled) args.push('--disabled');
     try {
         return await runOpenClawJson(args, { timeoutMs: 30000 });
@@ -1664,14 +1673,16 @@ function buildTaskJob({ message, agentId = 'main', priority = 3, source = 'ui', 
     };
 }
 
-async function createTask({ message, agentId = 'main', priority = 3, source = 'ui', name, autoRun = true } = {}) {
+async function createTask({ message, agentId = 'main', priority = 3, source = 'ui', name, autoRun = true, deliverTo = null, channel = null } = {}) {
     const spec = buildTaskJob({ message, agentId, priority, source, name });
     const job = await cronCliAdd({
         agentId: spec.agentId,
         name: spec.name,
         message: spec.payload.message,
         sessionTarget: 'isolated',
-        disabled: true
+        disabled: true,
+        deliverTo,
+        channel
     });
 
     const id = String(job?.id);
@@ -3145,8 +3156,11 @@ app.post('/api/tasks', async (req, res) => {
         const priority = input?.metadata?.priority ?? input?.priority ?? 3;
         const source = input?.payload?.source ?? 'ui';
         const name = input?.name;
+        // Optional delivery routing: deliverTo = Telegram chat ID or phone, channel = 'telegram' etc.
+        const deliverTo = input?.deliverTo ?? input?.payload?.deliverTo ?? null;
+        const channel = input?.channel ?? input?.payload?.channel ?? null;
 
-        const created = await createTask({ message, agentId, priority, source, name, autoRun: true });
+        const created = await createTask({ message, agentId, priority, source, name, autoRun: true, deliverTo, channel });
         const merged = await getCronJob(created.id);
         res.json({ ok: true, id: created.id, job: merged || created.job });
     } catch (error) {
