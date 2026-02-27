@@ -1,9 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import crypto from 'crypto';
 import * as contabo from './contabo.js';
-import { generateTerminalToken } from '../../../openclaw-host-kit/src/core/terminalToken.js';
-import { buildInstanceUrls } from '../../../openclaw-host-kit/src/core/urls.js';
-import { buildProvisionScript } from '../../../openclaw-host-kit/src/core/provision.js';
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, {
     auth: { persistSession: false, autoRefreshToken: false },
@@ -17,6 +14,80 @@ const RUNTIME_IMAGE = process.env.OPENCLAW_RUNTIME_IMAGE || 'openclaw-ttyd:lates
 const LOCAL_API_PORT = process.env.LOCAL_API_PORT || '4444';
 const VPS_CAPACITY_MAX = parseInt(process.env.VPS_CAPACITY_MAX || '6');
 
+// ── Inlined from openclaw-host-kit (TS source, no build output) ──────────────
+
+function generateTerminalToken(instanceId, { secret, ttlSeconds = 86400 }) {
+    const expiresAt = Math.floor(Date.now() / 1000) + ttlSeconds;
+    const payload = `${instanceId}:${expiresAt}`;
+    const sig = crypto.createHmac('sha256', secret).update(payload).digest('hex');
+    return `${expiresAt}.${sig}`;
+}
+
+function buildInstanceUrls({ instanceId, hostShard, baseDomain, subdomain = 'openclaw', terminalToken }) {
+    const host = `openclaw-${instanceId}.${hostShard}.${subdomain}.${baseDomain}`;
+    return {
+        openclawUrl: `https://${host}/`,
+        ttydUrl: `https://${host}/terminal?token=${terminalToken}`,
+    };
+}
+
+function buildProvisionScript({ traefikCompose, openclawRuntimeImage }) {
+    const { acmeEmail, wildcardDomain, cfDnsApiToken } = traefikCompose;
+    return `#!/usr/bin/env bash
+set -euo pipefail
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -y
+apt-get install -y ca-certificates curl gnupg lsb-release
+if ! command -v docker > /dev/null 2>&1; then
+  curl -fsSL https://get.docker.com | sh
+fi
+systemctl enable --now docker
+if ! docker compose version > /dev/null 2>&1; then
+  apt-get install -y docker-compose-plugin
+fi
+mkdir -p /opt/traefik
+touch /opt/traefik/acme.json
+chmod 600 /opt/traefik/acme.json
+
+cat > /opt/traefik-compose.yml << 'COMPOSE'
+version: "3.9"
+services:
+  traefik:
+    image: traefik:v3.1
+    container_name: traefik
+    restart: unless-stopped
+    command:
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.websecure.address=:443"
+      - "--certificatesresolvers.le.acme.email=${acmeEmail}"
+      - "--certificatesresolvers.le.acme.storage=/acme.json"
+      - "--certificatesresolvers.le.acme.dnschallenge=true"
+      - "--certificatesresolvers.le.acme.dnschallenge.provider=cloudflare"
+      - "--certificatesresolvers.le.acme.dnschallenge.resolvers=1.1.1.1:53,8.8.8.8:53"
+      - "--certificatesresolvers.le.acme.dnschallenge.delaybeforecheck=10"
+      - "--entrypoints.websecure.http.tls.certresolver=le"
+      - "--entrypoints.websecure.http.tls.domains[0].main=${wildcardDomain}"
+      - "--entrypoints.websecure.http.tls.domains[0].sans=*.${wildcardDomain}"
+    environment:
+      - CF_DNS_API_TOKEN=${cfDnsApiToken}
+    ports:
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /opt/traefik/acme.json:/acme.json
+networks:
+  default:
+    name: traefik_default
+COMPOSE
+
+docker compose -p traefik -f /opt/traefik-compose.yml up -d
+docker pull ${openclawRuntimeImage} || true
+`;
+}
+
+// ── Slot management ───────────────────────────────────────────────────────────
+
 export async function findAvailableNode() {
     const { data, error } = await supabase.rpc('claim_vps_slot');
     if (error) throw new Error(`claim_vps_slot: ${error.message}`);
@@ -26,6 +97,8 @@ export async function findAvailableNode() {
 export async function releaseSlot(nodeId) {
     await supabase.rpc('release_vps_slot', { node_id: nodeId });
 }
+
+// ── Instance trigger ──────────────────────────────────────────────────────────
 
 export async function triggerUserInstance(node, userId) {
     const res = await fetch(`http://${node.ip_address}:${LOCAL_API_PORT}/api/internal/create-instance`, {
@@ -60,6 +133,8 @@ export async function triggerUserInstance(node, userId) {
     };
 }
 
+// ── User provisioning ─────────────────────────────────────────────────────────
+
 export async function provisionUser(userId, username) {
     const node = await findAvailableNode();
 
@@ -92,6 +167,8 @@ export async function provisionUser(userId, username) {
     }
 }
 
+// ── VPS auto-provisioning ─────────────────────────────────────────────────────
+
 async function queueNewVpsProvisioning(pendingUserId) {
     const imageId = await contabo.getUbuntu2204ImageId();
 
@@ -109,8 +186,7 @@ async function queueNewVpsProvisioning(pendingUserId) {
         openclawRuntimeImage: RUNTIME_IMAGE,
     });
 
-    const userData = Buffer.from(`#!/bin/bash
-${provisionScript}
+    const userData = Buffer.from(`${provisionScript}
 
 cat > /opt/openclaw-host-kit/.env << 'EOF'
 OPENCLAW_BASE_DOMAIN=${BASE_DOMAIN}

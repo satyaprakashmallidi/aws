@@ -802,6 +802,8 @@ const allowedOrigins = [
     'https://automation-1.magicteams.ai',
     'http://127.0.0.1:4444',
     'http://localhost:4444',
+    'http://localhost:5173',
+    'http://127.0.0.1:5173',
     'https://openclaw-api.magicteams.ai',
     'https://openclaw.ai',
     'https://app.openclaw.ai'
