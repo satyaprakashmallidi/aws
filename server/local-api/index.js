@@ -1290,9 +1290,8 @@ async function cronCliList() {
 }
 
 const DEFAULT_TASK_SYSTEM_PROMPT =
-    'You are a task executor. When asked to perform any action, you MUST use the appropriate tool immediately. ' +
-    'Never say "I will", "I would", or "I have scheduled" — just call the tool and DO it right now. ' +
-    'Execute the requested action directly using your available tools. Do not describe your plan.';
+    'You are executing an automated background task. Please use the appropriate tool to complete the action requested. ' +
+    'Rather than explaining your intended steps, execute the actions directly using your available tools.';
 
 async function cronCliAdd({ agentId, name, message, sessionTarget = 'isolated', atIso = defaultTaskAtIso(), disabled = true, deliverTo = null, channel = null, systemPrompt = null } = {}) {
     // Prepend mandatory execution instruction into the message itself (--system flag is not supported)
