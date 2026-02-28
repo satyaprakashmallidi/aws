@@ -1925,14 +1925,18 @@ app.get('/api/subagents', async (req, res) => {
 });
 
 app.post('/api/subagents/spawn', async (req, res) => {
-    const { label, task, model, agentId = 'main' } = req.body || {};
+    const { label, task, model, agentId = 'main', timeoutSeconds = 300, thinking = 'off' } = req.body || {};
     if (!task || typeof task !== 'string' || !task.trim()) {
         return res.status(400).json({ error: 'task is required' });
     }
     try {
         const params = {
             task: task.trim(),
-            agentId: String(agentId || 'main')
+            agentId: String(agentId || 'main'),
+            mode: 'run',
+            runtime: 'subagent',
+            timeoutSeconds: Number(timeoutSeconds) || 300,
+            thinking: thinking || 'off'
         };
         if (label && typeof label === 'string' && label.trim()) {
             params.label = label.trim();
