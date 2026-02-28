@@ -1891,30 +1891,33 @@ app.get('/api/health', async (req, res) => {
 
 app.get('/api/subagents', async (req, res) => {
     try {
-        // Use the purpose-built subagents gateway method — not sessions.list which returns everything
-        const params = JSON.stringify({ action: 'list' });
+        // Use sessions.list and filter strictly to :subagent: keys only.
+        // 'subagents' is an agent tool (not a gateway RPC), so we cannot call it via CLI.
+        const params = JSON.stringify({ limit: 200 });
         const { code, stdout, stderr } = await runOpenClaw(
-            ['gateway', 'call', 'subagents', '--params', params],
+            ['gateway', 'call', 'sessions.list', '--params', params],
             { timeoutMs: 15000 }
         );
         if (code !== 0) {
-            return res.status(500).json({ error: 'Failed to list sub-agents', stderr: stderr?.slice(0, 500) });
+            // Return empty list rather than crashing the UI
+            console.warn('[subagents] sessions.list failed:', stderr?.slice(0, 200));
+            return res.json({ subagents: [] });
         }
-        const parsed = parseToolOutputJson(stdout, stderr) || {};
-        // subagents() returns { active: [...], recent: [...] }
-        const active = Array.isArray(parsed?.active) ? parsed.active : [];
-        const recent = Array.isArray(parsed?.recent) ? parsed.recent : [];
-        const all = [...active, ...recent];
-        const subagents = all.map(s => ({
-            sessionKey: s.sessionKey || s.key || '',
-            sessionId: s.sessionId || null,
-            label: s.label || s.task?.slice(0, 40) || 'Sub-Agent',
-            model: s.model || '',
-            status: s.status || 'unknown',
-            task: s.task || '',
-            updatedAt: s.startedAt || s.endedAt || null,
-            runId: s.runId || null
-        }));
+        const parsed = parseToolOutputJson(stdout, stderr);
+        const sessions = Array.isArray(parsed) ? parsed
+            : Array.isArray(parsed?.sessions) ? parsed.sessions
+                : [];
+        // Strictly filter to only true sub-agent sessions: agent:<id>:subagent:<uuid>
+        const subagents = sessions
+            .filter(s => String(s?.key || '').includes(':subagent:'))
+            .map(s => ({
+                sessionKey: s.key || '',
+                sessionId: s.sessionId || null,
+                label: s.label || s.displayName || 'Sub-Agent',
+                model: s.model || '',
+                status: s.status || 'session',
+                updatedAt: s.updatedAt || null
+            }));
         return res.json({ subagents });
     } catch (error) {
         return res.status(500).json({ error: error.message });
