@@ -1315,18 +1315,20 @@ async function cronCliAdd({ agentId, name, message, sessionTarget = 'isolated', 
     //   isolated      → --message <task>       (creates a dedicated agent turn)
     if (resolvedSession === 'main') {
         args.push('--system-event', taskText);
+        // NOTE: --no-deliver / --announce / --to are NOT valid for main session — skip them entirely.
+        // Main session delivery is handled by the heartbeat mechanism.
     } else {
         args.push('--message', taskText);
-    }
-    // If a delivery target is specified, route results there; otherwise suppress delivery.
-    if (deliverTo && typeof deliverTo === 'string' && deliverTo.trim()) {
-        args.push('--to', deliverTo.trim());
-        if (channel && typeof channel === 'string' && channel.trim()) {
-            args.push('--channel', channel.trim());
+        // Delivery flags only work with isolated sessions
+        if (deliverTo && typeof deliverTo === 'string' && deliverTo.trim()) {
+            args.push('--to', deliverTo.trim());
+            if (channel && typeof channel === 'string' && channel.trim()) {
+                args.push('--channel', channel.trim());
+            }
+            args.push('--announce');
+        } else {
+            args.push('--no-deliver');
         }
-        args.push('--announce');
-    } else {
-        args.push('--no-deliver');
     }
     if (disabled) args.push('--disabled');
     try {
