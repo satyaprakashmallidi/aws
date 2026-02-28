@@ -7,3 +7,4 @@ dist/
 .vercel
 Openclaw configuration for reference/
 .openclaw
+openapi.json
