@@ -1294,22 +1294,30 @@ const DEFAULT_TASK_SYSTEM_PROMPT =
     'Rather than explaining your intended steps, execute the actions directly using your available tools.';
 
 async function cronCliAdd({ agentId, name, message, sessionTarget = 'isolated', atIso = defaultTaskAtIso(), disabled = true, deliverTo = null, channel = null } = {}) {
+    const resolvedSession = String(sessionTarget || 'isolated');
+    const taskText = String(message || '');
     const args = [
         'cron',
         'add',
         '--name',
         String(name || `Task: ${summarizeMessage(message)}`),
         '--session',
-        String(sessionTarget || 'isolated'),
+        resolvedSession,
         '--agent',
         String(agentId || 'main'),
-        '--message',
-        String(message || ''),
         '--at',
         String(atIso),
         '--keep-after-run',
         '--json'
     ];
+    // --system-event and --message are mutually exclusive payloads:
+    //   main session  → --system-event <task> (triggers a heartbeat run in the main session)
+    //   isolated      → --message <task>       (creates a dedicated agent turn)
+    if (resolvedSession === 'main') {
+        args.push('--system-event', taskText);
+    } else {
+        args.push('--message', taskText);
+    }
     // If a delivery target is specified, route results there; otherwise suppress delivery.
     if (deliverTo && typeof deliverTo === 'string' && deliverTo.trim()) {
         args.push('--to', deliverTo.trim());
