@@ -1891,45 +1891,30 @@ app.get('/api/health', async (req, res) => {
 
 app.get('/api/subagents', async (req, res) => {
     try {
-        const params = JSON.stringify({
-            limit: 200
-        });
+        // Use the purpose-built subagents gateway method — not sessions.list which returns everything
+        const params = JSON.stringify({ action: 'list' });
         const { code, stdout, stderr } = await runOpenClaw(
-            ['gateway', 'call', 'sessions.list', '--params', params],
+            ['gateway', 'call', 'subagents', '--params', params],
             { timeoutMs: 15000 }
         );
         if (code !== 0) {
             return res.status(500).json({ error: 'Failed to list sub-agents', stderr: stderr?.slice(0, 500) });
         }
-        const parsed = parseToolOutputJson(stdout, stderr);
-        const sessions = Array.isArray(parsed) ? parsed
-            : Array.isArray(parsed?.sessions) ? parsed.sessions
-                : [];
-        // Show sessions that look like spawned sub-agents:
-        // - :subagent: keyed sessions (native subagent runtime)
-        // - agent:<id>:cron:<jobId> sessions (our cronCliAdd-based spawned sub-agents)
-        //   but NOT agent:<id>:cron:<jobId>:run:<runId> (those are internal run context sessions)
-        const subagents = sessions.filter(s => {
-            const key = String(s?.key || '');
-            if (key.includes(':subagent:')) return true;
-            // Include top-level cron sessions (exactly 4 parts: agent:agentId:cron:jobId)
-            const parts = key.split(':');
-            if (parts[2] === 'cron' && parts.length === 4) return true;
-            return false;
-        }).map(s => {
-            const key = String(s?.key || '');
-            // Use the cron job name/label if available, otherwise fall back to key parts
-            const fallbackLabel = s.label || s.displayName || key.split(':').slice(-1)[0] || 'Sub-Agent';
-            return {
-                sessionKey: key,
-                sessionId: s.sessionId,
-                label: fallbackLabel,
-                model: s.model || '',
-                updatedAt: s.updatedAt || null,
-                channel: s.channel || 'internal',
-                kind: s.kind || 'node'
-            };
-        });
+        const parsed = parseToolOutputJson(stdout, stderr) || {};
+        // subagents() returns { active: [...], recent: [...] }
+        const active = Array.isArray(parsed?.active) ? parsed.active : [];
+        const recent = Array.isArray(parsed?.recent) ? parsed.recent : [];
+        const all = [...active, ...recent];
+        const subagents = all.map(s => ({
+            sessionKey: s.sessionKey || s.key || '',
+            sessionId: s.sessionId || null,
+            label: s.label || s.task?.slice(0, 40) || 'Sub-Agent',
+            model: s.model || '',
+            status: s.status || 'unknown',
+            task: s.task || '',
+            updatedAt: s.startedAt || s.endedAt || null,
+            runId: s.runId || null
+        }));
         return res.json({ subagents });
     } catch (error) {
         return res.status(500).json({ error: error.message });
