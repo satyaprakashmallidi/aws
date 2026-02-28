@@ -1434,11 +1434,7 @@ async function cronInvoke(args) {
 }
 
 async function cronList() {
-    // 1) Disk (fast, works even if gateway is down)
-    const disk = readCronJobsFile();
-    if (disk?.exists) return disk.jobs;
-
-    // 2) CLI
+    // 1) CLI (queries the active gateway, ensures accurate state)
     try {
         const jobs = await cronCliList();
         if (Array.isArray(jobs)) return jobs;
@@ -1446,7 +1442,7 @@ async function cronList() {
         // ignore
     }
 
-    // 3) Gateway tool (best-effort)
+    // 2) Gateway tool (best-effort)
     try {
         const response = await cronInvoke({ action: 'list' });
         const details = response?.result?.details || {};
@@ -1455,6 +1451,10 @@ async function cronList() {
     } catch {
         // ignore
     }
+
+    // 3) Disk (fallback if gateway is down, might be stale)
+    const disk = readCronJobsFile();
+    if (disk?.exists) return disk.jobs;
 
     return [];
 }
