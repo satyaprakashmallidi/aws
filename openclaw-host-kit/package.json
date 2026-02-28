@@ -4,8 +4,12 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
+    "agent": "node vps-agent.js",
     "typecheck": "tsc --noEmit",
     "smoke:provision-script": "tsx ./scripts/smoke-provision-script.ts"
+  },
+  "dependencies": {
+    "express": "^4.21.0"
   },
   "devDependencies": {
     "@types/node": "^24.10.15",

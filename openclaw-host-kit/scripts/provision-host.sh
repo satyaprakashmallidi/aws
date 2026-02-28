@@ -26,15 +26,22 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
 apt-get install -y ca-certificates curl gnupg lsb-release
 
-if ! command -v docker >/dev/null 2>&1; then
+if ! command -v docker > /dev/null 2>&1; then
   curl -fsSL https://get.docker.com | sh
 fi
 
 systemctl enable --now docker
 
-if ! docker compose version >/dev/null 2>&1; then
+if ! docker compose version > /dev/null 2>&1; then
   apt-get install -y docker-compose-plugin
 fi
+
+if ! command -v node > /dev/null 2>&1; then
+  curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+  apt-get install -y nodejs
+fi
+
+npm install --prefix "$(pwd)" --omit=dev
 
 mkdir -p /opt/traefik
 touch /opt/traefik/acme.json
@@ -42,8 +49,33 @@ chmod 600 /opt/traefik/acme.json
 
 docker compose -p traefik -f deploy/traefik/docker-compose.yml up -d --build
 
+HOST_KIT_DIR="$(pwd)"
+cat > /etc/systemd/system/vps-agent.service << EOF
+[Unit]
+Description=OpenClaw VPS Agent
+After=network.target docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+WorkingDirectory=${HOST_KIT_DIR}
+EnvironmentFile=${HOST_KIT_DIR}/.env
+ExecStart=/usr/bin/node ${HOST_KIT_DIR}/vps-agent.js
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+systemctl enable --now vps-agent
+
 echo
 echo "Traefik is up."
+echo "vps-agent is up on port ${VPS_AGENT_PORT:-4444}."
 echo "Expected wildcard DNS (A record): *.${OPENCLAW_WILDCARD_DOMAIN} -> <this host IP>"
 
 if [ -n "${OPENCLAW_CONTROL_PLANE_URL:-}" ] && [ -n "${OPENCLAW_INTERNAL_SECRET:-}" ]; then
