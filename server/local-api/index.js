@@ -1579,7 +1579,11 @@ async function listCronJobs({ includeDisabled = true } = {}) {
     syncTaskMetaFromCronJobs(jobs);
     const metaMap = readTaskMetaFile();
     const merged = (Array.isArray(jobs) ? jobs : [])
-        .filter(j => j?.payload?.kind === 'agentTurn')
+        .filter(j => {
+            const kind = j?.payload?.kind;
+            // Include both isolated-session tasks (agentTurn) and main-session tasks (systemEvent)
+            return kind === 'agentTurn' || kind === 'systemEvent';
+        })
         .map(j => {
             const meta = (metaMap && typeof metaMap === 'object') ? metaMap[String(j?.id)] : null;
             const base = meta && typeof meta === 'object' ? meta : {};
