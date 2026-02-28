@@ -1925,42 +1925,38 @@ app.get('/api/subagents', async (req, res) => {
 });
 
 app.post('/api/subagents/spawn', async (req, res) => {
-    const { label, task, model, agentId = 'main', timeoutSeconds = 300, thinking = 'off' } = req.body || {};
+    const { label, task, model, agentId = 'main' } = req.body || {};
     if (!task || typeof task !== 'string' || !task.trim()) {
         return res.status(400).json({ error: 'task is required' });
     }
     try {
-        const params = {
-            task: task.trim(),
+        // Sub-agents are isolated one-shot cron jobs run immediately via cronCliAdd + cronCliRun
+        const name = label?.trim() || `Sub-Agent: ${task.trim().slice(0, 60)}`;
+        const job = await cronCliAdd({
             agentId: String(agentId || 'main'),
-            mode: 'run',
-            runtime: 'subagent',
-            timeoutSeconds: Number(timeoutSeconds) || 300,
-            thinking: thinking || 'off'
-        };
-        if (label && typeof label === 'string' && label.trim()) {
-            params.label = label.trim();
+            name,
+            message: task.trim(),
+            sessionTarget: 'isolated',
+            disabled: false  // enable immediately so it runs on creation
+        });
+        const jobId = String(job?.id || '');
+        if (!jobId) {
+            return res.status(500).json({ error: 'Spawn failed: no job ID returned', raw: job });
         }
-        if (model && typeof model === 'string' && model.trim()) {
-            params.model = model.trim();
-        }
-        const { code, stdout, stderr } = await runOpenClaw(
-            ['gateway', 'call', 'sessions.spawn', '--params', JSON.stringify(params)],
-            { timeoutMs: 20000 }
-        );
-        if (code !== 0) {
-            return res.status(500).json({ error: 'Failed to spawn sub-agent', stderr: stderr?.slice(0, 500) });
-        }
-        const parsed = parseToolOutputJson(stdout, stderr);
+        // Kick it off immediately
+        cronCliRun(jobId).catch(() => { /* fire and forget */ });
         return res.json({
             ok: true,
-            status: parsed?.status || 'accepted',
-            runId: parsed?.runId || null,
-            childSessionKey: parsed?.childSessionKey || null,
-            raw: parsed
+            status: 'spawned',
+            jobId,
+            label: name,
+            raw: job
         });
     } catch (error) {
-        return res.status(500).json({ error: error.message });
+        return res.status(500).json({
+            error: error.message,
+            stderr: error?.stderr ? String(error.stderr).slice(0, 500) : undefined
+        });
     }
 });
 
