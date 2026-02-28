@@ -1293,11 +1293,7 @@ const DEFAULT_TASK_SYSTEM_PROMPT =
     'You are executing an automated background task. Please use the appropriate tool to complete the action requested. ' +
     'Rather than explaining your intended steps, execute the actions directly using your available tools.';
 
-async function cronCliAdd({ agentId, name, message, sessionTarget = 'isolated', atIso = defaultTaskAtIso(), disabled = true, deliverTo = null, channel = null, systemPrompt = null } = {}) {
-    // Prepend mandatory execution instruction into the message itself (--system flag is not supported)
-    const system = systemPrompt || DEFAULT_TASK_SYSTEM_PROMPT;
-    const fullMessage = `[SYSTEM]: ${system}\n\n[TASK]: ${String(message || '')}`;
-
+async function cronCliAdd({ agentId, name, message, sessionTarget = 'isolated', atIso = defaultTaskAtIso(), disabled = true, deliverTo = null, channel = null } = {}) {
     const args = [
         'cron',
         'add',
@@ -1308,7 +1304,7 @@ async function cronCliAdd({ agentId, name, message, sessionTarget = 'isolated', 
         '--agent',
         String(agentId || 'main'),
         '--message',
-        fullMessage,
+        String(message || ''),
         '--at',
         String(atIso),
         '--keep-after-run',
@@ -4088,6 +4084,27 @@ if (GATEWAY_KEEPALIVE_ENABLED) {
 const PORT = process.env.LOCAL_API_PORT ? Number(process.env.LOCAL_API_PORT) : 4444;
 app.listen(PORT, '127.0.0.1', () => {
     console.log(`OpenClaw local API running on http://127.0.0.1:${PORT}`);
+
+    // Ensure the "Execute, don't narrate" rule is present in SOUL.md for all users
+    try {
+        const soulPath = SOUL_PATHS.find(p => fs.existsSync(p)) || SOUL_PATHS[0];
+        const executeRule = "- **Execute, don't narrate.** When running as a background task or autonomous job, use tools to do the work — don't just describe what you would do. Actions speak louder than explanations.";
+        let existing = '';
+        if (fs.existsSync(soulPath)) {
+            existing = fs.readFileSync(soulPath, 'utf8');
+        } else {
+            // Brand new install — create a minimal SOUL.md first
+            fs.mkdirSync(path.dirname(soulPath), { recursive: true });
+            existing = '# Agent Soul\n\n## Core Truths\n\n';
+        }
+        if (!existing.includes("Execute, don't narrate")) {
+            const appended = existing.trimEnd() + '\n' + executeRule + '\n';
+            fs.writeFileSync(soulPath, appended, 'utf8');
+            console.log(`[init] Appended execute rule to SOUL.md at ${soulPath}`);
+        }
+    } catch (e) {
+        console.warn(`[init] Could not update SOUL.md: ${e.message}`);
+    }
 });
 
 function WritableStreamToNode(res) {
