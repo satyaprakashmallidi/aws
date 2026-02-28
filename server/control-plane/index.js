@@ -49,22 +49,29 @@ app.delete('/api/provision/user/:userId', requireInternal, async (req, res) => {
     try {
         const { data: profile } = await supabase
             .from('user_profiles')
-            .select('vps_node_id, docker_container_name')
+            .select('vps_node_id, docker_container_name, instance_url')
             .eq('userid', userId)
             .maybeSingle();
 
         if (profile?.vps_node_id) {
             const { data: node } = await supabase
                 .from('vps_nodes')
-                .select('id, capacity_used, contabo_id')
+                .select('id, ip_address, capacity_used, status')
                 .eq('id', profile.vps_node_id)
                 .single();
 
             if (node) {
+                // Tell the VPS to actually stop and remove the container
+                fetch(`http://${node.ip_address}:${process.env.LOCAL_API_PORT || 4444}/api/internal/remove-instance/${userId}`, {
+                    method: 'DELETE',
+                    headers: { 'X-Internal-Secret': process.env.OPENCLAW_INTERNAL_SECRET },
+                    signal: AbortSignal.timeout(30_000),
+                }).catch((err) => console.error('[cancel] vps-agent remove-instance failed:', err));
+
                 const newUsed = Math.max(0, (node.capacity_used || 1) - 1);
                 await supabase.from('vps_nodes').update({
                     capacity_used: newUsed,
-                    status: newUsed === 0 ? 'ready' : 'ready',
+                    status: node.status === 'full' ? 'ready' : node.status,
                 }).eq('id', node.id);
             }
         }

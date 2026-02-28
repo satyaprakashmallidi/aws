@@ -160,6 +160,25 @@ begin
 end;
 $$;
 
+-- ─────────────────────────────────────────────────────────────────────────
+-- Release a claimed slot (called on container creation failure or cancellation)
+-- ─────────────────────────────────────────────────────────────────────────
+create or replace function public.release_vps_slot(node_id uuid)
+returns void
+language plpgsql
+as $$
+begin
+  update public.vps_nodes
+  set
+    capacity_used = greatest(0, capacity_used - 1),
+    status = case
+      when status = 'full' then 'ready'
+      else status
+    end
+  where id = node_id;
+end;
+$$;
+
 -- RLS: vps_nodes is admin-only (service role), users cannot read it
 alter table public.vps_nodes enable row level security;
 
