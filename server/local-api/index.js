@@ -1694,7 +1694,7 @@ async function createTask({ message, agentId = 'main', priority = 3, source = 'u
         name: spec.name,
         message: spec.payload.message,
         sessionTarget: 'main',   // isolated sessions fail silently — main session routes correctly
-        disabled: true,
+        disabled: false,         // create enabled so wakeMode:now fires immediately
         deliverTo,
         channel
     });
