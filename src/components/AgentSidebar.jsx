@@ -110,8 +110,8 @@ const AgentSidebar = ({ onAgentClick, selectedAgentId }) => {
                                 <div>
                                     <h3 className="font-semibold text-gray-800 text-sm">{agent.label}</h3>
                                     <div className="flex items-center gap-1">
-                                        <Circle className="w-2 h-2 text-green-500 fill-green-500" aria-hidden="true" />
-                                        <span className="text-xs text-gray-500">Active</span>
+                                        <Circle className="w-2 h-2 text-violet-400 fill-violet-400" aria-hidden="true" />
+                                        <span className="text-xs text-gray-500">Session</span>
                                     </div>
                                 </div>
                             </div>

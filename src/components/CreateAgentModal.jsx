@@ -1,44 +1,19 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { apiUrl } from '../lib/apiBase';
-import { X, Zap, AlertCircle } from 'lucide-react';
+import { X, Zap, AlertCircle, Info } from 'lucide-react';
 
 const FOCUS_RING = 'focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-2';
 
 const SpawnSubAgentModal = ({ isOpen, onClose, onCreated }) => {
-    const [availableModels, setAvailableModels] = useState([]);
-    const [loadingModels, setLoadingModels] = useState(false);
     const [spawning, setSpawning] = useState(false);
     const [error, setError] = useState(null);
+    const [formData, setFormData] = useState({ label: '', task: '' });
 
-    const [formData, setFormData] = useState({
-        label: '',
-        task: '',
-        model: ''
-    });
-
-    useEffect(() => {
-        if (!isOpen) return;
-        setError(null);
-        setFormData({ label: '', task: '', model: '' });
-
-        const load = async () => {
-            setLoadingModels(true);
-            try {
-                const res = await fetch(apiUrl('/api/models'));
-                const data = await res.json().catch(() => ({}));
-                setAvailableModels(Array.isArray(data.models) ? data.models : []);
-            } catch (err) {
-                console.error('Failed to load models', err);
-                setAvailableModels([]);
-            } finally {
-                setLoadingModels(false);
-            }
-        };
-
-        load();
-    }, [isOpen]);
-
+    // Reset on open
     if (!isOpen) return null;
+    const resetAndClose = () => { setFormData({ label: '', task: '' }); setError(null); onClose(); };
+
+
 
     const handleSubmit = async (e) => {
         e.preventDefault();
@@ -50,7 +25,6 @@ const SpawnSubAgentModal = ({ isOpen, onClose, onCreated }) => {
             const body = {
                 task: formData.task.trim(),
                 label: formData.label.trim() || undefined,
-                model: formData.model || undefined,
                 agentId: 'main'
             };
 
@@ -81,12 +55,18 @@ const SpawnSubAgentModal = ({ isOpen, onClose, onCreated }) => {
                     </h3>
                     <button
                         type="button"
-                        onClick={onClose}
+                        onClick={resetAndClose}
                         aria-label="Close dialog"
                         className={`rounded-full p-1 text-gray-500 transition-colors hover:bg-gray-200 hover:text-gray-700 ${FOCUS_RING}`}
                     >
                         <X className="w-5 h-5" aria-hidden="true" />
                     </button>
+                </div>
+
+                {/* Supervised agent info notice */}
+                <div className="mx-6 mt-4 flex items-start gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-700">
+                    <Info className="w-4 h-4 mt-0.5 shrink-0" aria-hidden="true" />
+                    <span>Sub-agents are <strong>supervised</strong> — spawning sends a message to the main agent who then creates and monitors the sub-agent. This will appear in the main chat.</span>
                 </div>
 
                 <form onSubmit={handleSubmit} className="p-6 space-y-4">
@@ -128,35 +108,10 @@ const SpawnSubAgentModal = ({ isOpen, onClose, onCreated }) => {
                         <p className="mt-1 text-xs text-gray-500">This becomes the sub-agent's initial instruction.</p>
                     </div>
 
-                    <div>
-                        <label htmlFor="spawn-model" className="block text-sm font-medium text-gray-700 mb-1">
-                            Model <span className="text-gray-400 font-normal">(optional — uses default if blank)</span>
-                        </label>
-                        {loadingModels ? (
-                            <div className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-gray-50 text-gray-400 text-sm">
-                                Loading models…
-                            </div>
-                        ) : (
-                            <select
-                                id="spawn-model"
-                                value={formData.model}
-                                onChange={(e) => setFormData({ ...formData, model: e.target.value })}
-                                className={`w-full rounded-lg border border-gray-300 bg-white px-3 py-2 shadow-sm transition-colors ${FOCUS_RING}`}
-                            >
-                                <option value="">Use default model</option>
-                                {availableModels.map((m) => (
-                                    <option key={m.key} value={m.key}>
-                                        {m.name} ({m.key})
-                                    </option>
-                                ))}
-                            </select>
-                        )}
-                    </div>
-
                     <div className="flex justify-end gap-3 pt-2">
                         <button
                             type="button"
-                            onClick={onClose}
+                            onClick={resetAndClose}
                             className={`rounded-lg px-4 py-2 font-semibold text-gray-700 transition-colors hover:bg-gray-100 ${FOCUS_RING}`}
                         >
                             Cancel

@@ -1905,19 +1905,31 @@ app.get('/api/subagents', async (req, res) => {
         const sessions = Array.isArray(parsed) ? parsed
             : Array.isArray(parsed?.sessions) ? parsed.sessions
                 : [];
-        // Filter out main sessions, keep only subagent-keyed sessions
+        // Show sessions that look like spawned sub-agents:
+        // - :subagent: keyed sessions (native subagent runtime)
+        // - agent:<id>:cron:<jobId> sessions (our cronCliAdd-based spawned sub-agents)
+        //   but NOT agent:<id>:cron:<jobId>:run:<runId> (those are internal run context sessions)
         const subagents = sessions.filter(s => {
             const key = String(s?.key || '');
-            return key.includes(':subagent:');
-        }).map(s => ({
-            sessionKey: s.key,
-            sessionId: s.sessionId,
-            label: s.label || s.displayName || s.key?.split(':').pop() || 'Sub-Agent',
-            model: s.model || '',
-            updatedAt: s.updatedAt || null,
-            channel: s.channel || 'internal',
-            kind: s.kind || 'node'
-        }));
+            if (key.includes(':subagent:')) return true;
+            // Include top-level cron sessions (exactly 4 parts: agent:agentId:cron:jobId)
+            const parts = key.split(':');
+            if (parts[2] === 'cron' && parts.length === 4) return true;
+            return false;
+        }).map(s => {
+            const key = String(s?.key || '');
+            // Use the cron job name/label if available, otherwise fall back to key parts
+            const fallbackLabel = s.label || s.displayName || key.split(':').slice(-1)[0] || 'Sub-Agent';
+            return {
+                sessionKey: key,
+                sessionId: s.sessionId,
+                label: fallbackLabel,
+                model: s.model || '',
+                updatedAt: s.updatedAt || null,
+                channel: s.channel || 'internal',
+                kind: s.kind || 'node'
+            };
+        });
         return res.json({ subagents });
     } catch (error) {
         return res.status(500).json({ error: error.message });
@@ -1925,32 +1937,30 @@ app.get('/api/subagents', async (req, res) => {
 });
 
 app.post('/api/subagents/spawn', async (req, res) => {
-    const { label, task, model, agentId = 'main' } = req.body || {};
+    const { label, task, agentId = 'main' } = req.body || {};
     if (!task || typeof task !== 'string' || !task.trim()) {
         return res.status(400).json({ error: 'task is required' });
     }
     try {
-        // Sub-agents are isolated one-shot cron jobs run immediately via cronCliAdd + cronCliRun
-        const name = label?.trim() || `Sub-Agent: ${task.trim().slice(0, 60)}`;
-        const job = await cronCliAdd({
+        // sessions_spawn is an agent tool, not a CLI command.
+        // We must ask the main agent to spawn the sub-agent on our behalf.
+        const labelPart = label?.trim() ? `, label: "${label.trim()}"` : '';
+        const instruction = `Please spawn a sub-agent right now using the sessions_spawn tool with task: "${task.trim()}"${labelPart} and mode: "run". Only call the sessions_spawn tool — do not explain or describe anything else.`;
+
+        const result = await runAgentTask({
             agentId: String(agentId || 'main'),
-            name,
-            message: task.trim(),
-            sessionTarget: 'isolated',
-            disabled: false  // enable immediately so it runs on creation
+            sessionId: `agent:${agentId || 'main'}:main`,
+            message: instruction
         });
-        const jobId = String(job?.id || '');
-        if (!jobId) {
-            return res.status(500).json({ error: 'Spawn failed: no job ID returned', raw: job });
-        }
-        // Kick it off immediately
-        cronCliRun(jobId).catch(() => { /* fire and forget */ });
+
+        // Try to extract the childSessionKey from the agent's response
+        const childKeyMatch = result?.content?.match(/agent:[a-z0-9_-]+:subagent:[a-f0-9-]+/);
         return res.json({
             ok: true,
             status: 'spawned',
-            jobId,
-            label: name,
-            raw: job
+            childSessionKey: childKeyMatch ? childKeyMatch[0] : null,
+            label: label?.trim() || null,
+            agentResponse: result?.content || null
         });
     } catch (error) {
         return res.status(500).json({
